@@ -201,9 +201,15 @@ impl ThreadEntry {
     }
 }
 
+pub(crate) struct ThreadSubscription {
+    pub(crate) state: Arc<Mutex<ThreadState>>,
+    pub(crate) entered_user_name: Option<String>,
+    pub(crate) connection_ids: Vec<ConnectionId>,
+}
+
 #[derive(Default)]
 struct ThreadStateManagerInner {
-    live_connections: HashSet<ConnectionId>,
+    live_connections: HashMap<ConnectionId, String>,
     threads: HashMap<ThreadId, ThreadEntry>,
     thread_ids_by_connection: HashMap<ConnectionId, HashSet<ThreadId>>,
 }
@@ -218,12 +224,16 @@ impl ThreadStateManager {
         Self::default()
     }
 
-    pub(crate) async fn connection_initialized(&self, connection_id: ConnectionId) {
+    pub(crate) async fn connection_initialized(
+        &self,
+        connection_id: ConnectionId,
+        user_name: String,
+    ) {
         self.state
             .lock()
             .await
             .live_connections
-            .insert(connection_id);
+            .insert(connection_id, user_name);
     }
 
     pub(crate) async fn subscribed_connection_ids(&self, thread_id: ThreadId) -> Vec<ConnectionId> {
@@ -233,6 +243,23 @@ impl ThreadStateManager {
             .get(&thread_id)
             .map(|thread_entry| thread_entry.connection_ids.iter().copied().collect())
             .unwrap_or_default()
+    }
+
+    pub(crate) async fn subscribed_user_activity(
+        &self,
+        thread_id: ThreadId,
+        connection_id: ConnectionId,
+    ) -> Option<(String, Vec<ConnectionId>)> {
+        let state = self.state.lock().await;
+        let user_name = state.live_connections.get(&connection_id)?.clone();
+        let thread_entry = state.threads.get(&thread_id)?;
+        if !thread_entry.connection_ids.contains(&connection_id) {
+            return None;
+        }
+        Some((
+            user_name,
+            thread_entry.connection_ids.iter().copied().collect(),
+        ))
     }
 
     pub(crate) async fn thread_state(&self, thread_id: ThreadId) -> Arc<Mutex<ThreadState>> {
@@ -339,21 +366,24 @@ impl ThreadStateManager {
         thread_id: ThreadId,
         connection_id: ConnectionId,
         experimental_raw_events: bool,
-    ) -> Option<Arc<Mutex<ThreadState>>> {
-        let thread_state = {
+    ) -> Option<ThreadSubscription> {
+        let (thread_state, entered_user_name, connection_ids) = {
             let mut state = self.state.lock().await;
-            if !state.live_connections.contains(&connection_id) {
-                return None;
-            }
+            let user_name = state.live_connections.get(&connection_id)?.clone();
             state
                 .thread_ids_by_connection
                 .entry(connection_id)
                 .or_default()
                 .insert(thread_id);
             let thread_entry = state.threads.entry(thread_id).or_default();
-            thread_entry.connection_ids.insert(connection_id);
+            let newly_subscribed = thread_entry.connection_ids.insert(connection_id);
             thread_entry.update_has_connections();
-            thread_entry.state.clone()
+            let connection_ids = thread_entry.connection_ids.iter().copied().collect();
+            (
+                thread_entry.state.clone(),
+                newly_subscribed.then_some(user_name),
+                connection_ids,
+            )
         };
         {
             let mut thread_state_guard = thread_state.lock().await;
@@ -361,7 +391,11 @@ impl ThreadStateManager {
                 thread_state_guard.set_experimental_raw_events(/*enabled*/ true);
             }
         }
-        Some(thread_state)
+        Some(ThreadSubscription {
+            state: thread_state,
+            entered_user_name,
+            connection_ids,
+        })
     }
 
     pub(crate) async fn try_add_connection_to_thread(
@@ -370,7 +404,7 @@ impl ThreadStateManager {
         connection_id: ConnectionId,
     ) -> bool {
         let mut state = self.state.lock().await;
-        if !state.live_connections.contains(&connection_id) {
+        if !state.live_connections.contains_key(&connection_id) {
             return false;
         }
         state

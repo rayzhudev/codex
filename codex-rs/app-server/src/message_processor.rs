@@ -187,6 +187,7 @@ struct InitializedConnectionSessionState {
     experimental_api_enabled: bool,
     opted_out_notification_methods: HashSet<String>,
     app_server_client_name: String,
+    user_activity_name: String,
     client_version: String,
 }
 
@@ -230,6 +231,12 @@ impl ConnectionSessionState {
         self.initialized
             .get()
             .map(|session| session.app_server_client_name.as_str())
+    }
+
+    pub(crate) fn user_activity_name(&self) -> Option<&str> {
+        self.initialized
+            .get()
+            .map(|session| session.user_activity_name.as_str())
     }
 
     pub(crate) fn client_version(&self) -> Option<&str> {
@@ -463,17 +470,48 @@ impl MessageProcessor {
         .await;
     }
 
-    pub(crate) async fn process_notification(&self, notification: JSONRPCNotification) {
-        // Currently, we do not expect to receive any notifications from the
-        // client, so we just log them.
-        tracing::info!("<- notification: {:?}", notification);
+    pub(crate) async fn process_notification(
+        &self,
+        connection_id: ConnectionId,
+        notification: JSONRPCNotification,
+        session: Arc<ConnectionSessionState>,
+    ) {
+        match ClientNotification::try_from(notification) {
+            Ok(notification) => {
+                self.process_client_notification(connection_id, notification, session)
+                    .await;
+            }
+            Err(err) => {
+                tracing::warn!("ignoring unrecognized client notification: {err}");
+            }
+        }
     }
 
     /// Handles typed notifications from in-process clients.
-    pub(crate) async fn process_client_notification(&self, notification: ClientNotification) {
-        // Currently, we do not expect to receive any typed notifications from
-        // in-process clients, so we just log them.
-        tracing::info!("<- typed notification: {:?}", notification);
+    pub(crate) async fn process_client_notification(
+        &self,
+        connection_id: ConnectionId,
+        notification: ClientNotification,
+        session: Arc<ConnectionSessionState>,
+    ) {
+        match notification {
+            ClientNotification::Initialized => {
+                tracing::info!("<- typed notification: Initialized");
+            }
+            ClientNotification::ThreadUserActivityTyping(params) => {
+                if !session.initialized() {
+                    tracing::warn!("ignoring typing notification from uninitialized connection");
+                    return;
+                }
+                if let Err(err) = self
+                    .codex_message_processor
+                    .thread_user_activity_typing(connection_id, params)
+                    .await
+                {
+                    tracing::warn!("ignoring typing notification: {}", err.message);
+                }
+            }
+        }
     }
 
     async fn run_request_with_context<F>(
@@ -507,9 +545,17 @@ impl MessageProcessor {
         }
     }
 
-    pub(crate) async fn connection_initialized(&self, connection_id: ConnectionId) {
+    pub(crate) async fn connection_initialized(
+        &self,
+        connection_id: ConnectionId,
+        session_state: &ConnectionSessionState,
+    ) {
+        let user_name = session_state
+            .user_activity_name()
+            .unwrap_or("Unknown user")
+            .to_string();
         self.codex_message_processor
-            .connection_initialized(connection_id)
+            .connection_initialized(connection_id, user_name)
             .await;
     }
 
@@ -622,7 +668,7 @@ impl MessageProcessor {
             };
             let ClientInfo {
                 name,
-                title: _title,
+                title,
                 version,
             } = params.client_info;
             // Validate before committing; set_default_originator validates while
@@ -633,6 +679,9 @@ impl MessageProcessor {
                 )));
             }
             let originator = name.clone();
+            let user_activity_name = title
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or_else(|| name.clone());
             let user_agent_suffix = format!("{name}; {version}");
             let codex_home = self.config.codex_home.clone();
             if session
@@ -642,6 +691,7 @@ impl MessageProcessor {
                         .into_iter()
                         .collect(),
                     app_server_client_name: name.clone(),
+                    user_activity_name,
                     client_version: version,
                 })
                 .is_err()
@@ -696,7 +746,13 @@ impl MessageProcessor {
                 // initialize handling for the specific connection.
                 outbound_initialized.store(true, Ordering::Release);
                 self.codex_message_processor
-                    .connection_initialized(connection_id)
+                    .connection_initialized(
+                        connection_id,
+                        session
+                            .user_activity_name()
+                            .unwrap_or("Unknown user")
+                            .to_string(),
+                    )
                     .await;
             }
             return Ok(());

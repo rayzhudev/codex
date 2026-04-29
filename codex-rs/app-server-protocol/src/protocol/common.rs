@@ -1055,12 +1055,21 @@ macro_rules! client_notification_definitions {
             )*
         }
 
+        #[allow(clippy::vec_init_then_push)]
         pub fn export_client_notification_schemas(
             _out_dir: &::std::path::Path,
         ) -> ::anyhow::Result<Vec<GeneratedSchema>> {
-            let schemas = Vec::new();
+            let mut schemas = Vec::new();
             $( $(schemas.push(crate::export::write_json_schema::<$payload>(_out_dir, stringify!($payload))?);)? )*
             Ok(schemas)
+        }
+
+        impl TryFrom<JSONRPCNotification> for ClientNotification {
+            type Error = serde_json::Error;
+
+            fn try_from(value: JSONRPCNotification) -> Result<Self, serde_json::Error> {
+                serde_json::from_value(serde_json::to_value(value)?)
+            }
         }
     };
 }
@@ -1223,6 +1232,7 @@ server_notification_definitions! {
     ThreadArchived => "thread/archived" (v2::ThreadArchivedNotification),
     ThreadUnarchived => "thread/unarchived" (v2::ThreadUnarchivedNotification),
     ThreadClosed => "thread/closed" (v2::ThreadClosedNotification),
+    ThreadUserActivity => "thread/userActivity" (v2::ThreadUserActivityNotification),
     SkillsChanged => "skills/changed" (v2::SkillsChangedNotification),
     ThreadNameUpdated => "thread/name/updated" (v2::ThreadNameUpdatedNotification),
     #[experimental("thread/goal/updated")]
@@ -1304,6 +1314,10 @@ server_notification_definitions! {
 
 client_notification_definitions! {
     Initialized,
+    #[serde(rename = "thread/userActivity/typing")]
+    #[ts(rename = "thread/userActivity/typing")]
+    #[strum(serialize = "thread/userActivity/typing")]
+    ThreadUserActivityTyping(v2::ThreadUserActivityTypingParams),
 }
 
 #[cfg(test)]
@@ -2503,6 +2517,48 @@ mod tests {
                     "status": {
                         "type": "idle"
                     },
+                }
+            }),
+            serde_json::to_value(&notification)?,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn serialize_thread_user_activity_notification() -> Result<()> {
+        let notification =
+            ServerNotification::ThreadUserActivity(v2::ThreadUserActivityNotification {
+                thread_id: "thr_123".to_string(),
+                user_name: "Claire".to_string(),
+                activity: v2::ThreadUserActivityKind::Entered,
+                message: "Claire entered the chat.".to_string(),
+            });
+        assert_eq!(
+            json!({
+                "method": "thread/userActivity",
+                "params": {
+                    "threadId": "thr_123",
+                    "userName": "Claire",
+                    "activity": "entered",
+                    "message": "Claire entered the chat.",
+                }
+            }),
+            serde_json::to_value(&notification)?,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn serialize_thread_user_activity_typing_client_notification() -> Result<()> {
+        let notification =
+            ClientNotification::ThreadUserActivityTyping(v2::ThreadUserActivityTypingParams {
+                thread_id: "thr_123".to_string(),
+            });
+        assert_eq!(
+            json!({
+                "method": "thread/userActivity/typing",
+                "params": {
+                    "threadId": "thr_123",
                 }
             }),
             serde_json::to_value(&notification)?,

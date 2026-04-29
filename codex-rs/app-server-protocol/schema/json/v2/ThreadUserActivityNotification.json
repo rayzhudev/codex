@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ThreadUserActivityKind": {
+      "enum": [
+        "entered",
+        "typing"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "activity": {
+      "$ref": "#/definitions/ThreadUserActivityKind"
+    },
+    "message": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "userName": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "activity",
+    "message",
+    "threadId",
+    "userName"
+  ],
+  "title": "ThreadUserActivityNotification",
+  "type": "object"
+}

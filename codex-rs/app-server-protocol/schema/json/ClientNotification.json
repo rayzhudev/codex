@@ -1,5 +1,18 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ThreadUserActivityTypingParams": {
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    }
+  },
   "oneOf": [
     {
       "properties": {
@@ -15,6 +28,26 @@
         "method"
       ],
       "title": "InitializedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/userActivity/typing"
+          ],
+          "title": "Thread/userActivity/typingNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadUserActivityTypingParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Thread/userActivity/typingNotification",
       "type": "object"
     }
   ],

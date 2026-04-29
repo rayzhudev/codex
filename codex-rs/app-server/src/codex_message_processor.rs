@@ -211,6 +211,9 @@ use codex_app_server_protocol::ThreadUnarchivedNotification;
 use codex_app_server_protocol::ThreadUnsubscribeParams;
 use codex_app_server_protocol::ThreadUnsubscribeResponse;
 use codex_app_server_protocol::ThreadUnsubscribeStatus;
+use codex_app_server_protocol::ThreadUserActivityKind;
+use codex_app_server_protocol::ThreadUserActivityNotification;
+use codex_app_server_protocol::ThreadUserActivityTypingParams;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnError;
 use codex_app_server_protocol::TurnInterruptParams;
@@ -4093,9 +4096,13 @@ impl CodexMessageProcessor {
         self.thread_manager.subscribe_thread_created()
     }
 
-    pub(crate) async fn connection_initialized(&self, connection_id: ConnectionId) {
+    pub(crate) async fn connection_initialized(
+        &self,
+        connection_id: ConnectionId,
+        user_name: String,
+    ) {
         self.thread_state_manager
-            .connection_initialized(connection_id)
+            .connection_initialized(connection_id, user_name)
             .await;
     }
 
@@ -4115,6 +4122,72 @@ impl CodexMessageProcessor {
                 self.finalize_thread_teardown(thread_id).await;
             }
         }
+    }
+
+    pub(crate) async fn thread_user_activity_typing(
+        &self,
+        connection_id: ConnectionId,
+        params: ThreadUserActivityTypingParams,
+    ) -> Result<(), JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(&params.thread_id).map_err(|err| {
+            invalid_request(format!("invalid thread id {}: {err}", params.thread_id))
+        })?;
+        let Some((user_name, connection_ids)) = self
+            .thread_state_manager
+            .subscribed_user_activity(thread_id, connection_id)
+            .await
+        else {
+            return Ok(());
+        };
+        self.send_thread_user_activity(
+            thread_id,
+            user_name,
+            ThreadUserActivityKind::Typing,
+            connection_ids,
+        )
+        .await;
+        Ok(())
+    }
+
+    async fn send_thread_user_activity(
+        &self,
+        thread_id: ThreadId,
+        user_name: String,
+        activity: ThreadUserActivityKind,
+        connection_ids: Vec<ConnectionId>,
+    ) {
+        Self::send_thread_user_activity_with_outgoing(
+            &self.outgoing,
+            thread_id,
+            user_name,
+            activity,
+            connection_ids,
+        )
+        .await;
+    }
+
+    async fn send_thread_user_activity_with_outgoing(
+        outgoing: &OutgoingMessageSender,
+        thread_id: ThreadId,
+        user_name: String,
+        activity: ThreadUserActivityKind,
+        connection_ids: Vec<ConnectionId>,
+    ) {
+        let message = match activity {
+            ThreadUserActivityKind::Entered => format!("{user_name} entered the chat."),
+            ThreadUserActivityKind::Typing => format!("{user_name} is typing."),
+        };
+        outgoing
+            .send_server_notification_to_connections(
+                &connection_ids,
+                ServerNotification::ThreadUserActivity(ThreadUserActivityNotification {
+                    thread_id: thread_id.to_string(),
+                    user_name,
+                    activity,
+                    message,
+                }),
+            )
+            .await;
     }
 
     pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
@@ -7341,11 +7414,13 @@ impl CodexMessageProcessor {
             };
             thread_state
         };
+        let entered_user_name = thread_state.entered_user_name.clone();
+        let subscribed_connection_ids = thread_state.connection_ids.clone();
         if let Err(error) = Self::ensure_listener_task_running_task(
             listener_task_context.clone(),
             conversation_id,
             conversation,
-            thread_state,
+            thread_state.state,
             api_version,
         )
         .await
@@ -7355,6 +7430,16 @@ impl CodexMessageProcessor {
                 .unsubscribe_connection_from_thread(conversation_id, connection_id)
                 .await;
             return Err(error);
+        }
+        if let Some(user_name) = entered_user_name {
+            Self::send_thread_user_activity_with_outgoing(
+                &listener_task_context.outgoing,
+                conversation_id,
+                user_name,
+                ThreadUserActivityKind::Entered,
+                subscribed_connection_ids,
+            )
+            .await;
         }
         Ok(EnsureConversationListenerResult::Attached)
     }
@@ -10686,7 +10771,9 @@ mod tests {
         let connection = ConnectionId(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
 
-        manager.connection_initialized(connection).await;
+        manager
+            .connection_initialized(connection, "Claire".to_string())
+            .await;
         manager
             .try_ensure_connection_subscribed(
                 thread_id, connection, /*experimental_raw_events*/ false,
@@ -10729,8 +10816,12 @@ mod tests {
         let connection_b = ConnectionId(2);
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
 
-        manager.connection_initialized(connection_a).await;
-        manager.connection_initialized(connection_b).await;
+        manager
+            .connection_initialized(connection_a, "Claire".to_string())
+            .await;
+        manager
+            .connection_initialized(connection_b, "Sam".to_string())
+            .await;
         manager
             .try_ensure_connection_subscribed(
                 thread_id,
@@ -10768,14 +10859,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn thread_user_activity_tracks_subscribed_user_names() -> Result<()> {
+        let manager = ThreadStateManager::new();
+        let thread_id = ThreadId::from_string("ad7f0408-99b8-4f6e-a46f-bd0eec433370")?;
+        let connection_a = ConnectionId(1);
+        let connection_b = ConnectionId(2);
+
+        manager
+            .connection_initialized(connection_a, "Claire".to_string())
+            .await;
+        manager
+            .connection_initialized(connection_b, "Sam".to_string())
+            .await;
+
+        let subscription_a = manager
+            .try_ensure_connection_subscribed(
+                thread_id,
+                connection_a,
+                /*experimental_raw_events*/ false,
+            )
+            .await
+            .expect("connection_a should be live");
+        assert_eq!(subscription_a.entered_user_name, Some("Claire".to_string()));
+        assert_eq!(subscription_a.connection_ids, vec![connection_a]);
+
+        let repeat_subscription_a = manager
+            .try_ensure_connection_subscribed(
+                thread_id,
+                connection_a,
+                /*experimental_raw_events*/ false,
+            )
+            .await
+            .expect("connection_a should still be live");
+        assert_eq!(repeat_subscription_a.entered_user_name, None);
+
+        let subscription_b = manager
+            .try_ensure_connection_subscribed(
+                thread_id,
+                connection_b,
+                /*experimental_raw_events*/ false,
+            )
+            .await
+            .expect("connection_b should be live");
+        assert_eq!(subscription_b.entered_user_name, Some("Sam".to_string()));
+        assert_eq!(
+            subscription_b
+                .connection_ids
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            HashSet::from([connection_a, connection_b])
+        );
+
+        let (user_name, connection_ids) = manager
+            .subscribed_user_activity(thread_id, connection_b)
+            .await
+            .expect("connection_b should be subscribed");
+        assert_eq!(user_name, "Sam".to_string());
+        assert_eq!(
+            connection_ids.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([connection_a, connection_b])
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn adding_connection_to_thread_updates_has_connections_watcher() -> Result<()> {
         let manager = ThreadStateManager::new();
         let thread_id = ThreadId::from_string("ad7f0408-99b8-4f6e-a46f-bd0eec433370")?;
         let connection_a = ConnectionId(1);
         let connection_b = ConnectionId(2);
 
-        manager.connection_initialized(connection_a).await;
-        manager.connection_initialized(connection_b).await;
+        manager
+            .connection_initialized(connection_a, "Claire".to_string())
+            .await;
+        manager
+            .connection_initialized(connection_b, "Sam".to_string())
+            .await;
         manager
             .try_ensure_connection_subscribed(
                 thread_id,
@@ -10820,7 +10980,9 @@ mod tests {
         let thread_id = ThreadId::from_string("ad7f0408-99b8-4f6e-a46f-bd0eec433370")?;
         let connection = ConnectionId(1);
 
-        manager.connection_initialized(connection).await;
+        manager
+            .connection_initialized(connection, "Claire".to_string())
+            .await;
         let threads_to_unload = manager.remove_connection(connection).await;
         assert_eq!(threads_to_unload, Vec::<ThreadId>::new());
 

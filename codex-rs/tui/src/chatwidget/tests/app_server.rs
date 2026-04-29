@@ -1,4 +1,6 @@
 use super::*;
+use codex_app_server_protocol::ThreadUserActivityKind;
+use codex_app_server_protocol::ThreadUserActivityNotification;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -79,6 +81,28 @@ async fn live_app_server_user_message_item_completed_does_not_duplicate_rendered
     );
 
     assert!(drain_insert_history(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn app_server_user_activity_notification_renders_in_history() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_server_notification(
+        ServerNotification::ThreadUserActivity(ThreadUserActivityNotification {
+            thread_id: "thread-1".to_string(),
+            user_name: "Claire".to_string(),
+            activity: ThreadUserActivityKind::Entered,
+            message: "Claire entered the chat.".to_string(),
+        }),
+        /*replay_kind*/ None,
+    );
+
+    let inserted = drain_insert_history(&mut rx);
+    assert_eq!(inserted.len(), 1);
+    insta::assert_snapshot!(
+        lines_to_single_string(&inserted[0]),
+        @"* Claire entered the chat."
+    );
 }
 
 #[tokio::test]

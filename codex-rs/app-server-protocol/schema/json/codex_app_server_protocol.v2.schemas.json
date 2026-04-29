@@ -10424,6 +10424,26 @@
           "properties": {
             "method": {
               "enum": [
+                "thread/userActivity"
+              ],
+              "title": "Thread/userActivityNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadUserActivityNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Thread/userActivityNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "skills/changed"
               ],
               "title": "Skills/changedNotificationMethod",
@@ -14694,6 +14714,51 @@
         "unsubscribed"
       ],
       "type": "string"
+    },
+    "ThreadUserActivityKind": {
+      "enum": [
+        "entered",
+        "typing"
+      ],
+      "type": "string"
+    },
+    "ThreadUserActivityNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "activity": {
+          "$ref": "#/definitions/ThreadUserActivityKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "userName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "activity",
+        "message",
+        "threadId",
+        "userName"
+      ],
+      "title": "ThreadUserActivityNotification",
+      "type": "object"
+    },
+    "ThreadUserActivityTypingParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "title": "ThreadUserActivityTypingParams",
+      "type": "object"
     },
     "TokenUsageBreakdown": {
       "properties": {

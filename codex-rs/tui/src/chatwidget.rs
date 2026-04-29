@@ -7368,6 +7368,10 @@ impl ChatWidget {
             ServerNotification::ThreadGoalCleared(notification) => {
                 self.on_thread_goal_cleared(notification.thread_id.as_str());
             }
+            ServerNotification::ThreadUserActivity(notification) => {
+                self.add_to_history(history_cell::new_user_activity_event(notification.message));
+                self.request_redraw();
+            }
             ServerNotification::TurnStarted(notification) => {
                 self.last_turn_id = Some(notification.turn.id);
                 self.last_non_retry_error = None;
