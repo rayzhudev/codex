@@ -150,6 +150,9 @@ impl ChatWidget {
             SlashCommand::Invite => {
                 self.app_event_tx.send(AppEvent::StartMultiplayerSession);
             }
+            SlashCommand::Join => {
+                self.show_multiplayer_join_prompt();
+            }
             SlashCommand::Init => {
                 let init_target = self.config.cwd.join(DEFAULT_AGENTS_MD_FILENAME);
                 if init_target.exists() {
@@ -717,6 +720,10 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::ResumeSessionByIdOrName(args));
             }
+            SlashCommand::Join if !trimmed.is_empty() => {
+                self.app_event_tx
+                    .send(AppEvent::JoinMultiplayerSession(args));
+            }
             SlashCommand::SandboxReadRoot if !trimmed.is_empty() => {
                 self.app_event_tx
                     .send(AppEvent::BeginWindowsSandboxGrantReadRoot { path: args });
@@ -850,6 +857,7 @@ impl ChatWidget {
             | SlashCommand::Diff
             | SlashCommand::Rename
             | SlashCommand::Invite
+            | SlashCommand::Join
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback
             | SlashCommand::New

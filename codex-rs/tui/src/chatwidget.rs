@@ -945,6 +945,7 @@ pub(crate) struct ChatWidget {
     thread_name: Option<String>,
     thread_rename_block_message: Option<String>,
     active_side_conversation: bool,
+    joined_multiplayer_session: bool,
     normal_placeholder_text: String,
     side_placeholder_text: String,
     forked_from: Option<ThreadId>,
@@ -5619,6 +5620,7 @@ impl ChatWidget {
             thread_name: None,
             thread_rename_block_message: None,
             active_side_conversation: false,
+            joined_multiplayer_session: false,
             normal_placeholder_text: placeholder,
             side_placeholder_text: side_placeholder,
             forked_from: None,
@@ -6090,6 +6092,24 @@ impl ChatWidget {
         self.bottom_pane.show_view(Box::new(view));
     }
 
+    fn show_multiplayer_join_prompt(&mut self) {
+        let tx = self.app_event_tx.clone();
+        let view = CustomPromptView::new(
+            "Join multiplayer".to_string(),
+            "Paste an invite link and press Enter".to_string(),
+            /*initial_text*/ String::new(),
+            /*context_label*/ None,
+            Box::new(move |invite: String| {
+                let invite = invite.trim().to_string();
+                if !invite.is_empty() {
+                    tx.send(AppEvent::JoinMultiplayerSession(invite));
+                }
+            }),
+        );
+
+        self.bottom_pane.show_view(Box::new(view));
+    }
+
     fn ensure_thread_rename_allowed(&mut self) -> bool {
         match self.thread_rename_block_message.clone() {
             Some(message) => {
@@ -6268,6 +6288,19 @@ impl ChatWidget {
             && user_message.remote_image_urls.is_empty()
         {
             return (false, None);
+        }
+        if self.joined_multiplayer_session {
+            if !user_message.local_images.is_empty() || !user_message.remote_image_urls.is_empty() {
+                self.add_error_message(
+                    "Multiplayer joined sessions currently support text messages only.".to_string(),
+                );
+                return (false, None);
+            }
+            self.app_event_tx
+                .send(AppEvent::SendJoinedMultiplayerMessage {
+                    text: user_message.text,
+                });
+            return (true, None);
         }
         if (!user_message.local_images.is_empty() || !user_message.remote_image_urls.is_empty())
             && !self.current_model_supports_images()
@@ -11712,6 +11745,10 @@ impl ChatWidget {
                 ShellEscapePolicy::Disallow,
             );
         }
+    }
+
+    pub(crate) fn set_joined_multiplayer_session(&mut self, joined: bool) {
+        self.joined_multiplayer_session = joined;
     }
 
     /// True when the UI is in the regular composer state with no running task,

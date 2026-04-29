@@ -61,6 +61,7 @@ use crate::multi_agents::agent_picker_status_dot_spans;
 use crate::multi_agents::format_agent_picker_item_name;
 use crate::multi_agents::next_agent_shortcut_matches;
 use crate::multi_agents::previous_agent_shortcut_matches;
+use crate::multiplayer::MultiplayerClient;
 use crate::multiplayer::MultiplayerSession;
 use crate::pager_overlay::Overlay;
 use crate::read_session_model;
@@ -586,6 +587,7 @@ pub(crate) struct App {
     // cwd contexts.
     pending_plugin_enabled_writes: HashMap<String, Option<bool>>,
     multiplayer_session: Option<MultiplayerSession>,
+    multiplayer_client: Option<Box<MultiplayerClient>>,
 }
 
 fn active_turn_not_steerable_turn_error(error: &TypedRequestError) -> Option<AppServerTurnError> {
@@ -676,6 +678,36 @@ impl App {
             Err(err) => {
                 self.chat_widget
                     .add_error_message(format!("Failed to start multiplayer session: {err}"));
+            }
+        }
+    }
+
+    async fn join_multiplayer_session(&mut self, invite: String) {
+        if self.multiplayer_session.is_some() {
+            self.chat_widget.add_error_message(
+                "This Codex session is already hosting multiplayer. Open another Codex CLI to join."
+                    .to_string(),
+            );
+            return;
+        }
+
+        match MultiplayerClient::connect(self.app_event_tx.clone(), &invite).await {
+            Ok(client) => {
+                let url = client.url().to_string();
+                self.multiplayer_client = Some(Box::new(client));
+                self.chat_widget
+                    .set_joined_multiplayer_session(/*joined*/ true);
+                self.chat_widget.add_info_message(
+                    format!("Joined multiplayer session: {url}"),
+                    Some(
+                        "Messages you type here will be sent to the host Codex session."
+                            .to_string(),
+                    ),
+                );
+            }
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to join multiplayer session: {err}"));
             }
         }
     }
@@ -1003,6 +1035,7 @@ See the Codex keymap documentation for supported actions and examples."
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
             multiplayer_session: None,
+            multiplayer_client: None,
         };
         if let Some(started) = initial_started_thread {
             app.enqueue_primary_thread_session(started.session, started.turns)

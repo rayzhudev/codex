@@ -3732,6 +3732,7 @@ async fn make_test_app() -> App {
         pending_app_server_requests: PendingAppServerRequests::default(),
         pending_plugin_enabled_writes: HashMap::new(),
         multiplayer_session: None,
+        multiplayer_client: None,
     }
 }
 
@@ -3793,6 +3794,7 @@ async fn make_test_app_with_channels() -> (
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
             multiplayer_session: None,
+            multiplayer_client: None,
         },
         rx,
         op_rx,

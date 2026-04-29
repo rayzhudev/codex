@@ -23,6 +23,10 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::sync::broadcast;
+use tokio::sync::mpsc;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+use url::Url;
 use uuid::Uuid;
 
 const HISTORY_LIMIT: usize = 4000;
@@ -33,6 +37,11 @@ pub(crate) struct MultiplayerSession {
     url: String,
 }
 
+pub(crate) struct MultiplayerClient {
+    outbound_tx: mpsc::UnboundedSender<String>,
+    url: String,
+}
+
 struct MultiplayerState {
     token: String,
     history: Mutex<Vec<String>>,
@@ -40,7 +49,7 @@ struct MultiplayerState {
     app_event_tx: AppEventSender,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum ServerMessage {
     Snapshot { lines: Vec<String> },
@@ -53,10 +62,79 @@ struct InviteQuery {
     token: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum ClientMessage {
     Chat { name: String, text: String },
+}
+
+impl MultiplayerClient {
+    pub(crate) async fn connect(
+        app_event_tx: AppEventSender,
+        invite: &str,
+    ) -> anyhow::Result<Self> {
+        let ws_url = invite_to_ws_url(invite)?;
+        let (socket, _) = connect_async(ws_url.as_str()).await?;
+        let (mut writer, mut reader) = socket.split();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
+        let url = ws_url.to_string();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    outbound = outbound_rx.recv() => {
+                        let Some(text) = outbound else {
+                            break;
+                        };
+                        let message = ClientMessage::Chat {
+                            name: default_participant_name(),
+                            text,
+                        };
+                        let Ok(payload) = serde_json::to_string(&message) else {
+                            continue;
+                        };
+                        if writer.send(TungsteniteMessage::Text(payload.into())).await.is_err() {
+                            app_event_tx.send(AppEvent::JoinedMultiplayerDisconnected {
+                                reason: Some("Failed to send message to multiplayer session.".to_string()),
+                            });
+                            break;
+                        }
+                    }
+                    incoming = reader.next() => {
+                        match incoming {
+                            Some(Ok(TungsteniteMessage::Text(text))) => {
+                                handle_joined_server_message(&app_event_tx, text.as_ref());
+                            }
+                            Some(Ok(TungsteniteMessage::Close(_))) | None => {
+                                app_event_tx.send(AppEvent::JoinedMultiplayerDisconnected {
+                                    reason: None,
+                                });
+                                break;
+                            }
+                            Some(Ok(_)) => {}
+                            Some(Err(err)) => {
+                                app_event_tx.send(AppEvent::JoinedMultiplayerDisconnected {
+                                    reason: Some(err.to_string()),
+                                });
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(Self { outbound_tx, url })
+    }
+
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub(crate) fn send_chat(&self, text: String) -> anyhow::Result<()> {
+        self.outbound_tx.send(text)?;
+        Ok(())
+    }
 }
 
 impl MultiplayerSession {
@@ -119,6 +197,57 @@ impl MultiplayerSession {
             .tx
             .send(ServerMessage::System { text: text.into() });
     }
+}
+
+fn handle_joined_server_message(app_event_tx: &AppEventSender, payload: &str) {
+    let Ok(message) = serde_json::from_str::<ServerMessage>(payload) else {
+        return;
+    };
+    match message {
+        ServerMessage::Snapshot { lines } | ServerMessage::Transcript { lines } => {
+            app_event_tx.send(AppEvent::JoinedMultiplayerTranscript { lines });
+        }
+        ServerMessage::System { text } => {
+            app_event_tx.send(AppEvent::JoinedMultiplayerSystem { text });
+        }
+    }
+}
+
+fn invite_to_ws_url(invite: &str) -> anyhow::Result<Url> {
+    let trimmed = invite.trim();
+    let normalized = if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("ws://")
+        || trimmed.starts_with("wss://")
+    {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    };
+    let mut url = Url::parse(&normalized)?;
+    let scheme = match url.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        "ws" => "ws",
+        "wss" => "wss",
+        other => anyhow::bail!("unsupported invite link scheme: {other}"),
+    };
+    url.set_scheme(scheme)
+        .map_err(|_| anyhow::anyhow!("failed to convert invite link to websocket URL"))?;
+    url.set_path("/ws");
+    if !url.query_pairs().any(|(key, _)| key == "token") {
+        anyhow::bail!("invite link is missing a token");
+    }
+    Ok(url)
+}
+
+fn default_participant_name() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .ok()
+        .map(|name| clean_name(&name))
+        .filter(|name| name != "Guest")
+        .unwrap_or_else(|| "Codex CLI".to_string())
 }
 
 pub(crate) fn lines_to_plain_text(lines: Vec<Line<'static>>) -> Vec<String> {
@@ -372,6 +501,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
 mod tests {
     use super::HISTORY_LIMIT;
     use super::clean_name;
+    use super::invite_to_ws_url;
     use super::trim_history;
 
     #[test]
@@ -393,5 +523,26 @@ mod tests {
         let trimmed = trim_history(history);
         assert_eq!(trimmed.len(), HISTORY_LIMIT);
         assert_eq!(trimmed.first().map(String::as_str), Some("5"));
+    }
+
+    #[test]
+    fn invite_to_ws_url_accepts_http_invite_links() {
+        let url = invite_to_ws_url("http://127.0.0.1:1234?token=abc").expect("valid invite");
+
+        assert_eq!(url.as_str(), "ws://127.0.0.1:1234/ws?token=abc");
+    }
+
+    #[test]
+    fn invite_to_ws_url_accepts_host_and_query() {
+        let url = invite_to_ws_url("127.0.0.1:1234?token=abc").expect("valid invite");
+
+        assert_eq!(url.as_str(), "ws://127.0.0.1:1234/ws?token=abc");
+    }
+
+    #[test]
+    fn invite_to_ws_url_rejects_missing_token() {
+        let err = invite_to_ws_url("http://127.0.0.1:1234").expect_err("missing token");
+
+        assert!(err.to_string().contains("missing a token"));
     }
 }

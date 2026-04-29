@@ -32,6 +32,7 @@ pub enum SlashCommand {
     Resume,
     Fork,
     Invite,
+    Join,
     Init,
     Compact,
     Plan,
@@ -87,6 +88,7 @@ impl SlashCommand {
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
             SlashCommand::Invite => "host a multiplayer session and show the invite link",
+            SlashCommand::Join => "join a multiplayer session from an invite link",
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
@@ -151,6 +153,7 @@ impl SlashCommand {
                 | SlashCommand::Mcp
                 | SlashCommand::Side
                 | SlashCommand::Resume
+                | SlashCommand::Join
                 | SlashCommand::SandboxReadRoot
         )
     }
@@ -215,6 +218,7 @@ impl SlashCommand {
             SlashCommand::Collab => true,
             SlashCommand::Agent | SlashCommand::MultiAgents => true,
             SlashCommand::Invite => true,
+            SlashCommand::Join => true,
             SlashCommand::Theme => false,
         }
     }

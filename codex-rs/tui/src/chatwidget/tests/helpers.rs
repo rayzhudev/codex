@@ -264,6 +264,7 @@ pub(super) async fn make_chatwidget_manual(
         thread_name: None,
         thread_rename_block_message: None,
         active_side_conversation: false,
+        joined_multiplayer_session: false,
         normal_placeholder_text: "Ask Codex to do anything".to_string(),
         side_placeholder_text: "Check recently modified functions for compatibility".to_string(),
         forked_from: None,

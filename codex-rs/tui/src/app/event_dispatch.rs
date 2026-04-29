@@ -183,6 +183,51 @@ impl App {
                 self.start_or_show_multiplayer_session().await;
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::JoinMultiplayerSession(invite) => {
+                self.join_multiplayer_session(invite).await;
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::SendJoinedMultiplayerMessage { text } => {
+                match &self.multiplayer_client {
+                    Some(client) => {
+                        if let Err(err) = client.send_chat(text) {
+                            self.chat_widget.add_error_message(format!(
+                                "Failed to send multiplayer message: {err}"
+                            ));
+                        }
+                    }
+                    None => {
+                        self.chat_widget.add_error_message(
+                            "No joined multiplayer session is active.".to_string(),
+                        );
+                        self.chat_widget
+                            .set_joined_multiplayer_session(/*joined*/ false);
+                    }
+                }
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::JoinedMultiplayerTranscript { lines } => {
+                self.chat_widget.add_plain_history_lines(
+                    lines.into_iter().map(ratatui::text::Line::from).collect(),
+                );
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::JoinedMultiplayerSystem { text } => {
+                self.chat_widget
+                    .add_info_message(format!("Multiplayer: {text}"), /*hint*/ None);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::JoinedMultiplayerDisconnected { reason } => {
+                self.multiplayer_client = None;
+                self.chat_widget
+                    .set_joined_multiplayer_session(/*joined*/ false);
+                let message = reason.map_or_else(
+                    || "Disconnected from multiplayer session.".to_string(),
+                    |reason| format!("Disconnected from multiplayer session: {reason}"),
+                );
+                self.chat_widget.add_error_message(message);
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::MultiplayerChatMessage { author, text } => {
                 self.chat_widget
                     .submit_multiplayer_user_message(author, text);

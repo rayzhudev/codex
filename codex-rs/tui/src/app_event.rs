@@ -168,6 +168,29 @@ pub(crate) enum AppEvent {
     /// Start or display the current multiplayer invite server.
     StartMultiplayerSession,
 
+    /// Join a multiplayer session hosted by another Codex TUI.
+    JoinMultiplayerSession(String),
+
+    /// Submit a local message to the joined multiplayer session.
+    SendJoinedMultiplayerMessage {
+        text: String,
+    },
+
+    /// Append transcript lines received from a joined multiplayer session.
+    JoinedMultiplayerTranscript {
+        lines: Vec<String>,
+    },
+
+    /// Show a system message received from a joined multiplayer session.
+    JoinedMultiplayerSystem {
+        text: String,
+    },
+
+    /// The joined multiplayer connection closed.
+    JoinedMultiplayerDisconnected {
+        reason: Option<String>,
+    },
+
     /// Submit a message received from a browser participant.
     MultiplayerChatMessage {
         author: String,
