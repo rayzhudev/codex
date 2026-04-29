@@ -518,23 +518,71 @@ fn wait_complete_lines(
 
     entries
         .into_iter()
-        .map(|entry| {
+        .flat_map(|entry| {
             let CollabAgentStatusEntry {
                 thread_id,
                 agent_nickname,
                 agent_role,
                 status,
             } = entry;
-            let mut spans = agent_label_spans(AgentLabel {
-                thread_id: Some(thread_id),
-                nickname: agent_nickname.as_deref(),
-                role: agent_role.as_deref(),
-            });
-            spans.push(Span::from(": ").dim());
-            spans.extend(status_summary_spans(&status));
-            spans.into()
+            status_lines_for_agent(
+                AgentLabel {
+                    thread_id: Some(thread_id),
+                    nickname: agent_nickname.as_deref(),
+                    role: agent_role.as_deref(),
+                },
+                &status,
+            )
         })
         .collect()
+}
+
+fn status_lines_for_agent(agent: AgentLabel<'_>, status: &AgentStatus) -> Vec<Line<'static>> {
+    match status {
+        AgentStatus::Running => {
+            let username = agent
+                .nickname
+                .map(str::trim)
+                .filter(|nickname| !nickname.is_empty())
+                .map(ToOwned::to_owned)
+                .or_else(|| agent.thread_id.map(|thread_id| thread_id.to_string()))
+                .unwrap_or_else(|| "agent".to_string());
+
+            vec![Line::from(vec![
+                "[".dim(),
+                Span::from(username).cyan().bold(),
+                "] is typing...".dim(),
+            ])]
+        }
+        AgentStatus::Completed(Some(message)) => {
+            let message_preview = truncate_text(
+                &message.split_whitespace().collect::<Vec<_>>().join(" "),
+                COLLAB_AGENT_RESPONSE_PREVIEW_GRAPHEMES,
+            );
+            if message_preview.is_empty() {
+                let mut spans = agent_label_spans(agent);
+                spans.push(Span::from(": ").dim());
+                spans.extend(status_summary_spans(status));
+                vec![spans.into()]
+            } else {
+                vec![
+                    agent_label_line(agent),
+                    Line::from(Span::from(message_preview)),
+                ]
+            }
+        }
+        AgentStatus::PendingInit
+        | AgentStatus::Interrupted
+        | AgentStatus::Completed(None)
+        | AgentStatus::Errored(_)
+        | AgentStatus::Shutdown
+        | AgentStatus::NotFound => {
+            let mut spans = agent_label_spans(agent);
+            spans.push(Span::from(": ").dim());
+            spans.extend(status_summary_spans(status));
+            vec![spans.into()]
+        }
+    }
 }
 
 fn status_summary_line(status: &AgentStatus) -> Line<'static> {
