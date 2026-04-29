@@ -303,6 +303,51 @@ fn trim_trailing_blank_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>
     lines
 }
 
+fn is_horizontal_rule_line(line: &Line<'static>) -> bool {
+    let text = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    let trimmed = text.trim();
+    trimmed.chars().count() >= 16
+        && trimmed
+            .chars()
+            .all(|ch| matches!(ch, '-' | '_' | '─' | '━' | '═'))
+}
+
+fn collapse_repeated_horizontal_rule_lines(
+    lines: Vec<Line<'static>>,
+    style: Style,
+) -> Vec<Line<'static>> {
+    let mut collapsed = Vec::with_capacity(lines.len());
+    let mut iter = lines.into_iter().peekable();
+
+    while let Some(line) = iter.next() {
+        if !is_horizontal_rule_line(&line) {
+            collapsed.push(line);
+            continue;
+        }
+
+        let mut run = vec![line];
+        while iter.peek().is_some_and(is_horizontal_rule_line) {
+            if let Some(next) = iter.next() {
+                run.push(next);
+            }
+        }
+
+        let count = run.len();
+        if count >= 3 {
+            collapsed
+                .push(Line::from(format!("[{count} repeated divider lines hidden]")).style(style));
+        } else {
+            collapsed.extend(run);
+        }
+    }
+
+    collapsed
+}
+
 impl HistoryCell for UserHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let wrap_width = width
@@ -342,6 +387,7 @@ impl HistoryCell for UserHistoryCell {
                     .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
             );
             let wrapped = trim_trailing_blank_lines(wrapped);
+            let wrapped = collapse_repeated_horizontal_rule_lines(wrapped, style);
             (!wrapped.is_empty()).then_some(wrapped)
         } else {
             let raw_lines = build_user_message_lines_with_elements(
@@ -356,6 +402,7 @@ impl HistoryCell for UserHistoryCell {
                     .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
             );
             let wrapped = trim_trailing_blank_lines(wrapped);
+            let wrapped = collapse_repeated_horizontal_rule_lines(wrapped, style);
             (!wrapped.is_empty()).then_some(wrapped)
         };
 
@@ -3180,6 +3227,43 @@ mod tests {
                 "  └ A tiny blue square".to_string(),
                 expected_saved_path,
             ],
+        );
+    }
+
+    #[test]
+    fn user_prompt_collapses_repeated_divider_lines() {
+        let divider = "─".repeat(120);
+        let message = std::iter::repeat_n(divider, 80)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cell = new_user_prompt(message, Vec::new(), Vec::new(), Vec::new());
+        let rendered = render_lines(&cell.display_lines(/*width*/ 200));
+
+        assert_eq!(
+            rendered,
+            vec![
+                "".to_string(),
+                "› [80 repeated divider lines hidden]".to_string(),
+                "".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn user_prompt_keeps_short_divider_runs() {
+        let divider = "─".repeat(32);
+        let message = [divider.as_str(), divider.as_str()].join("\n");
+        let cell = new_user_prompt(message, Vec::new(), Vec::new(), Vec::new());
+        let rendered = render_lines(&cell.display_lines(/*width*/ 100));
+
+        assert_eq!(
+            rendered,
+            vec![
+                "".to_string(),
+                format!("› {divider}"),
+                format!("  {divider}"),
+                "".to_string(),
+            ]
         );
     }
 

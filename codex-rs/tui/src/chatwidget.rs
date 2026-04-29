@@ -94,6 +94,7 @@ Keep each child task self-contained and include file/module ownership when codin
 Tell child agents they are not alone in the codebase and must not revert edits made by others.
 Do not paste child transcripts into the main chat; summarize only status, blockers, decisions, and final results.
 Track participant names in messages and route follow-ups from the same participant to the relevant task when clear.
+When the user has requested a push, wait for every delegated coding task to finish, verify tests and working state, then commit and push the integrated result to GitHub.
 "#;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;

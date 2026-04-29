@@ -105,6 +105,7 @@ async fn orchestrator_mode_injects_developer_instructions() {
         .expect("orchestrator instructions");
     assert!(instructions.contains("You are Codex Orchestrator"));
     assert!(instructions.contains("use spawn_agent"));
+    assert!(instructions.contains("commit and push the integrated result to GitHub"));
 }
 
 #[tokio::test]
