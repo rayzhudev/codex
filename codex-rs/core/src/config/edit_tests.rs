@@ -232,6 +232,23 @@ gpt-foo = 4
 }
 
 #[test]
+fn set_tui_orchestrator_mode_writes_setting() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+
+    ConfigEditsBuilder::new(codex_home)
+        .set_tui_orchestrator_mode(true)
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    let expected = r#"[tui]
+orchestrator_mode = true
+"#;
+    assert_eq!(contents, expected);
+}
+
+#[test]
 fn set_skill_config_writes_disabled_entry() {
     let tmp = tempdir().expect("tmpdir");
     let codex_home = tmp.path();

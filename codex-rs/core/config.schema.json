@@ -2383,6 +2383,11 @@
           "default": true,
           "description": "Enable desktop notifications from the TUI. Defaults to `true`."
         },
+        "orchestrator_mode": {
+          "default": false,
+          "description": "Keep Codex in master orchestration mode across TUI launches and resumed sessions.",
+          "type": "boolean"
+        },
         "show_tooltips": {
           "default": true,
           "description": "Show startup tooltips in the TUI welcome screen. Defaults to `true`.",

@@ -221,7 +221,7 @@ impl SlashCommand {
             SlashCommand::Agent | SlashCommand::MultiAgents => true,
             SlashCommand::Invite => true,
             SlashCommand::Join => true,
-            SlashCommand::Orchestrate => true,
+            SlashCommand::Orchestrate => false,
             SlashCommand::Theme => false,
         }
     }
@@ -276,7 +276,7 @@ mod tests {
         assert!(SlashCommand::Title.available_during_task());
         assert!(SlashCommand::Statusline.available_during_task());
         assert!(SlashCommand::Invite.available_during_task());
-        assert!(SlashCommand::Orchestrate.available_during_task());
+        assert!(!SlashCommand::Orchestrate.available_during_task());
     }
 
     #[test]

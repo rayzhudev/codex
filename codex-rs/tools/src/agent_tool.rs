@@ -563,6 +563,13 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
             )),
         ),
         (
+            "cwd".to_string(),
+            JsonSchema::string(Some(
+                "Optional working directory for the spawned agent. Use an absolute path or a path relative to the current session cwd."
+                    .to_string(),
+            )),
+        ),
+        (
             "model".to_string(),
             JsonSchema::string(Some(
                 SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION.to_string(),

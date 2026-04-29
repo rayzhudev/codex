@@ -501,6 +501,9 @@ pub(crate) enum AppEvent {
     /// Update the active collaboration mask in the running app and widget.
     UpdateCollaborationMode(CollaborationModeMask),
 
+    /// Update and persist master orchestration mode for the TUI.
+    UpdateOrchestratorMode(bool),
+
     /// Update the current personality in the running app and widget.
     UpdatePersonality(Personality),
 

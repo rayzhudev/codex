@@ -5,7 +5,6 @@ use crate::agent::control::render_input_preview;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
-use crate::session::turn_context::TurnEnvironment;
 use codex_protocol::AgentPath;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
@@ -34,6 +33,12 @@ impl ToolHandler for Handler {
         let arguments = function_arguments(payload)?;
         let args: SpawnAgentArgs = parse_arguments(&arguments)?;
         let fork_mode = args.fork_mode()?;
+        let child_cwd = args
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|cwd| !cwd.is_empty())
+            .map(|cwd| turn.config.cwd.join(cwd));
         let role_name = args
             .agent_type
             .as_deref()
@@ -87,6 +92,9 @@ impl ToolHandler for Handler {
         }
         apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
         apply_spawn_agent_overrides(&mut config, child_depth);
+        if let Some(child_cwd) = &child_cwd {
+            config.cwd = child_cwd.clone();
+        }
 
         let spawn_source = thread_spawn_source(
             session.conversation_id,
@@ -127,7 +135,13 @@ impl ToolHandler for Handler {
                     environments: Some(
                         turn.environments
                             .iter()
-                            .map(TurnEnvironment::selection)
+                            .map(|environment| {
+                                let mut selection = environment.selection();
+                                if let Some(child_cwd) = &child_cwd {
+                                    selection.cwd = child_cwd.clone();
+                                }
+                                selection
+                            })
                             .collect(),
                     ),
                 },
@@ -226,6 +240,7 @@ struct SpawnAgentArgs {
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
     fork_turns: Option<String>,
+    cwd: Option<String>,
     fork_context: Option<bool>,
 }
 

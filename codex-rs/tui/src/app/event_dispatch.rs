@@ -682,6 +682,20 @@ impl App {
             AppEvent::UpdateCollaborationMode(mask) => {
                 self.chat_widget.set_collaboration_mask(mask);
             }
+            AppEvent::UpdateOrchestratorMode(enabled) => {
+                if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+                    .set_tui_orchestrator_mode(enabled)
+                    .apply()
+                    .await
+                {
+                    tracing::warn!(error = %err, "failed to persist orchestrator mode");
+                    self.chat_widget.add_error_message(format!(
+                        "Failed to save orchestrator mode setting: {err}"
+                    ));
+                }
+                self.config.tui_orchestrator_mode = enabled;
+                self.chat_widget.set_orchestrator_mode(enabled);
+            }
             AppEvent::UpdatePersonality(personality) => {
                 self.on_update_personality(personality);
             }

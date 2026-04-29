@@ -4684,6 +4684,35 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
 }
 
 #[tokio::test]
+async fn replace_chat_widget_preserves_orchestrator_mode() {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.chat_widget.set_orchestrator_mode(true);
+
+    let replacement = ChatWidget::new_with_app_event(ChatWidgetInit {
+        config: app.config.clone(),
+        frame_requester: crate::tui::FrameRequester::test_dummy(),
+        app_event_tx: app.app_event_tx.clone(),
+        initial_user_message: None,
+        enhanced_keys_supported: app.enhanced_keys_supported,
+        has_chatgpt_account: app.chat_widget.has_chatgpt_account(),
+        model_catalog: app.model_catalog.clone(),
+        feedback: app.feedback.clone(),
+        is_first_run: false,
+        status_account_display: app.chat_widget.status_account_display().cloned(),
+        initial_plan_type: app.chat_widget.current_plan_type(),
+        model: Some(app.chat_widget.current_model().to_string()),
+        startup_tooltip_override: None,
+        status_line_invalid_items_warned: app.status_line_invalid_items_warned.clone(),
+        terminal_title_invalid_items_warned: app.terminal_title_invalid_items_warned.clone(),
+        session_telemetry: app.session_telemetry.clone(),
+    });
+
+    app.replace_chat_widget(replacement);
+
+    assert!(app.chat_widget.orchestrator_mode());
+}
+
+#[tokio::test]
 async fn refreshed_snapshot_session_persists_resumed_turns() {
     let mut app = make_test_app().await;
     let thread_id = ThreadId::new();

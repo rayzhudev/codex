@@ -82,20 +82,38 @@ use crate::version::CODEX_CLI_VERSION;
 
 const ORCHESTRATOR_MODE_INSTRUCTIONS: &str = r#"You are Codex Orchestrator for a shared Codex session.
 
+You are the triage and routing agent, not the worker agent.
+The user has explicitly enabled orchestrator mode, so every actionable user request counts as authorization to delegate to subagents.
 Optimize for parallel execution and low main-chat noise.
 Respond in 1-2 concise sentences in the main chat unless user input is required.
-For substantial or independent work, use spawn_agent to delegate to child Codex agents.
+Do not satisfy actionable user requests yourself: do not write the requested story, code, review, explanation, website, plan, or artifact in the main thread.
+Do not invoke domain skills or do implementation/research locally in the main thread; child agents should use the relevant skills and tools.
+You may perform only minimal orchestration/admin work locally, such as classifying intake, choosing or creating task names, creating a worktree/branch needed before spawning a coding child, routing to an existing child, or asking a blocking clarification.
+Do the intake work for the user: decompose bundled or vague input into concrete parallel tasks, blocked questions, or deferred items.
+Treat user follow-ups delivered as orchestrator inbox batches as new intake, not as steering for your current reasoning.
+For inbox batches, quickly classify, merge, or route the new input, then return a short status update.
+If replayed or overlapping input arrives, reconcile it with existing agents instead of duplicating work.
+For each actionable item, use spawn_agent to delegate new work or send_input to route it to an existing child agent.
 Spawn multiple agents in parallel when tasks can proceed independently.
-Before delegating, identify which tasks are independent and which task you should handle locally right now.
-Do not wait for child agents unless their result is needed for the next main-chat step.
+After spawning or routing, stop; do not wait for the child unless a blocking clarification or dependency makes progress impossible without the result.
+For coding work in an existing git repository, create a fresh git worktree and branch for that task before spawning the child.
+Spawn coding child agents with spawn_agent's `cwd` set to their dedicated worktree; do not let them edit the main checkout or branch.
+If the target is a new standalone folder or not inside a git repository, do not block on worktree setup; spawn the child in the most appropriate existing parent or target directory and instruct it to initialize git locally if useful.
+Instruct coding child agents in git repositories to commit their work in that worktree, push their branch, and open a pull request for review when a remote is available.
+Use the `codex/` branch prefix unless the user requested another branch naming scheme.
+Read-only investigation agents may run without a dedicated worktree or pull request.
 Use send_input to route follow-ups to existing agents when appropriate.
-Use wait_agent sparingly, with timeouts scaled to the expected work.
+Use wait_agent only when you are genuinely blocked from routing or answering a status request without a child result.
 Keep each child task self-contained and include file/module ownership when coding work is delegated.
 Tell child agents they are not alone in the codebase and must not revert edits made by others.
 Do not paste child transcripts into the main chat; summarize only status, blockers, decisions, and final results.
 Track participant names in messages and route follow-ups from the same participant to the relevant task when clear.
-When the user has requested a push, wait for every delegated coding task to finish, verify tests and working state, then commit and push the integrated result to GitHub.
+When a child reports completion, surface pull request links, blockers, or final status briefly.
 "#;
+
+const ORCHESTRATOR_ROUTING_PROMPT: &str = "Route this orchestrator-mode user request. Do not complete the request yourself in the main thread. If it is a greeting, brief acknowledgment, or status question that requires no worker, answer briefly. Otherwise, spawn_agent for new work or send_input to an existing child agent, then reply only with routing status, blockers, or decisions. The user enabled orchestrator mode, so this is explicit delegation authorization. For coding work in a new standalone folder or other non-git target, do not block on worktree setup; spawn a child in the most appropriate directory and have it initialize git locally if useful.";
+
+const ORCHESTRATOR_INBOX_BATCH_PROMPT: &str = "Process this orchestrator inbox batch as routing intake. Do not complete the requested work yourself in the main thread. For each actionable item, spawn_agent for new work or send_input to an existing child agent; reconcile overlapping items instead of duplicating work. Then reply only with brief routing status, blockers, or decisions.";
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppInfo;
@@ -1557,6 +1575,121 @@ fn user_message_event_for_display(
     }
 }
 
+fn orchestrator_routing_user_message(
+    message: UserMessage,
+    history_record: &UserMessageHistoryRecord,
+) -> (UserMessage, UserMessageHistoryRecord) {
+    let display_message = user_message_for_restore(message.clone(), history_record);
+    let display_text = if display_message.text.is_empty() {
+        "Orchestrator request".to_string()
+    } else {
+        display_message.text
+    };
+    let display_history = UserMessageHistoryRecord::Override(UserMessageHistoryOverride {
+        text: display_text,
+        text_elements: display_message.text_elements,
+    });
+
+    let mut text = String::new();
+    let mut text_elements = Vec::new();
+    append_text_with_rebased_elements(
+        &mut text,
+        &mut text_elements,
+        ORCHESTRATOR_ROUTING_PROMPT,
+        Vec::new(),
+    );
+    append_text_with_rebased_elements(
+        &mut text,
+        &mut text_elements,
+        "\n\nUser request to route:",
+        Vec::new(),
+    );
+    if !message.text.is_empty() {
+        append_text_with_rebased_elements(&mut text, &mut text_elements, "\n\n", Vec::new());
+        append_text_with_rebased_elements(
+            &mut text,
+            &mut text_elements,
+            &message.text,
+            message.text_elements,
+        );
+    } else if !message.local_images.is_empty() || !message.remote_image_urls.is_empty() {
+        append_text_with_rebased_elements(
+            &mut text,
+            &mut text_elements,
+            "\n\nThe user request includes image input.",
+            Vec::new(),
+        );
+    }
+
+    (
+        UserMessage {
+            text,
+            text_elements,
+            local_images: message.local_images,
+            mention_bindings: message.mention_bindings,
+            remote_image_urls: message.remote_image_urls,
+        },
+        display_history,
+    )
+}
+
+fn orchestrator_inbox_batch_user_message(
+    messages: Vec<(UserMessage, UserMessageHistoryRecord)>,
+) -> (UserMessage, UserMessageHistoryRecord) {
+    let count = messages.len();
+    let (merged_message, history_record) = merge_user_messages_with_history_record(messages);
+    let display_message = user_message_for_restore(merged_message.clone(), &history_record);
+    let display_text = if display_message.text.is_empty() {
+        if count == 1 {
+            "Orchestrator inbox update".to_string()
+        } else {
+            format!("Orchestrator inbox batch ({count} updates)")
+        }
+    } else {
+        display_message.text
+    };
+    let display_history = UserMessageHistoryRecord::Override(UserMessageHistoryOverride {
+        text: display_text,
+        text_elements: display_message.text_elements,
+    });
+
+    let mut text = String::new();
+    let mut text_elements = Vec::new();
+    let title = if count == 1 {
+        "New orchestrator inbox update:"
+    } else {
+        "New orchestrator inbox updates:"
+    };
+    append_text_with_rebased_elements(
+        &mut text,
+        &mut text_elements,
+        ORCHESTRATOR_INBOX_BATCH_PROMPT,
+        Vec::new(),
+    );
+    append_text_with_rebased_elements(&mut text, &mut text_elements, "\n\n", Vec::new());
+    append_text_with_rebased_elements(&mut text, &mut text_elements, title, Vec::new());
+    if !merged_message.text.is_empty() {
+        append_text_with_rebased_elements(&mut text, &mut text_elements, "\n\n", Vec::new());
+        append_text_with_rebased_elements(
+            &mut text,
+            &mut text_elements,
+            &merged_message.text,
+            merged_message.text_elements,
+        );
+    }
+
+    (
+        UserMessage {
+            text,
+            text_elements,
+            local_images: merged_message.local_images,
+            mention_bindings: merged_message.mention_bindings,
+            remote_image_urls: merged_message.remote_image_urls,
+        },
+        display_history,
+    )
+}
+
 fn merge_user_messages_with_history_record(
     messages: Vec<(UserMessage, UserMessageHistoryRecord)>,
 ) -> (UserMessage, UserMessageHistoryRecord) {
@@ -3016,6 +3149,41 @@ impl ChatWidget {
             );
             Some((QueuedUserMessage::from(message), history_record))
         }
+    }
+
+    fn pop_next_orchestrator_inbox_batch(
+        &mut self,
+    ) -> Option<(UserMessage, UserMessageHistoryRecord, usize)> {
+        if !self.orchestrator_mode || !self.rejected_steers_queue.is_empty() {
+            return None;
+        }
+        if self
+            .queued_user_messages
+            .front()
+            .is_none_or(|message| message.action != QueuedInputAction::Plain)
+        {
+            return None;
+        }
+
+        let mut batch = Vec::new();
+        while self
+            .queued_user_messages
+            .front()
+            .is_some_and(|message| message.action == QueuedInputAction::Plain)
+        {
+            let Some(message) = self.queued_user_messages.pop_front() else {
+                break;
+            };
+            let history_record = self
+                .queued_user_message_history_records
+                .pop_front()
+                .unwrap_or(UserMessageHistoryRecord::UserMessageText);
+            batch.push((message.into_user_message(), history_record));
+        }
+
+        let count = batch.len();
+        let (message, history_record) = orchestrator_inbox_batch_user_message(batch);
+        Some((message, history_record, count))
     }
 
     fn pop_latest_queued_user_message(&mut self) -> Option<UserMessage> {
@@ -5546,6 +5714,7 @@ impl ChatWidget {
             &chat_keymap.edit_queued_message,
             current_terminal_info,
         );
+        let orchestrator_mode = config.tui_orchestrator_mode;
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
             frame_requester: frame_requester.clone(),
@@ -5639,7 +5808,7 @@ impl ChatWidget {
             thread_rename_block_message: None,
             active_side_conversation: false,
             joined_multiplayer_session: false,
-            orchestrator_mode: false,
+            orchestrator_mode,
             normal_placeholder_text: placeholder,
             side_placeholder_text: side_placeholder,
             forked_from: None,
@@ -6131,6 +6300,8 @@ impl ChatWidget {
 
     fn toggle_orchestrator_mode(&mut self) {
         self.orchestrator_mode = !self.orchestrator_mode;
+        self.app_event_tx
+            .send(AppEvent::UpdateOrchestratorMode(self.orchestrator_mode));
         if self.orchestrator_mode {
             self.add_info_message(
                 "Orchestrator mode enabled.".to_string(),
@@ -6145,6 +6316,14 @@ impl ChatWidget {
                 /*hint*/ None,
             );
         }
+    }
+
+    pub(crate) fn orchestrator_mode(&self) -> bool {
+        self.orchestrator_mode
+    }
+
+    pub(crate) fn set_orchestrator_mode(&mut self, enabled: bool) {
+        self.orchestrator_mode = enabled;
     }
 
     fn ensure_thread_rename_allowed(&mut self) -> bool {
@@ -6339,6 +6518,27 @@ impl ChatWidget {
                 });
             return (true, None);
         }
+        if self.orchestrator_mode && self.agent_turn_running {
+            self.queued_user_messages
+                .push_back(QueuedUserMessage::from(user_message));
+            self.queued_user_message_history_records
+                .push_back(history_record);
+            self.refresh_pending_input_preview();
+            let waiting_count = self.queued_user_messages.len();
+            let title = if waiting_count == 1 {
+                "Added to orchestrator inbox.".to_string()
+            } else {
+                format!("Added to orchestrator inbox ({waiting_count} waiting).")
+            };
+            self.add_info_message(
+                title,
+                Some(
+                    "I'll fold it into the next orchestration pass without steering the active agent."
+                        .to_string(),
+                ),
+            );
+            return (true, None);
+        }
         if (!user_message.local_images.is_empty() || !user_message.remote_image_urls.is_empty())
             && !self.current_model_supports_images()
         {
@@ -6359,12 +6559,13 @@ impl ChatWidget {
             return (false, None);
         }
         let UserMessage {
-            text,
-            local_images,
-            remote_image_urls,
-            text_elements,
-            mention_bindings,
+            mut text,
+            mut local_images,
+            mut remote_image_urls,
+            mut text_elements,
+            mut mention_bindings,
         } = user_message;
+        let mut history_record = history_record;
 
         let render_in_history = !self.agent_turn_running;
         let mut items: Vec<UserInput> = Vec::new();
@@ -6380,6 +6581,34 @@ impl ChatWidget {
                 )),
             };
             return (app_command.is_some(), app_command);
+        }
+
+        if self.orchestrator_mode
+            && !text.starts_with(ORCHESTRATOR_ROUTING_PROMPT)
+            && !text.starts_with(ORCHESTRATOR_INBOX_BATCH_PROMPT)
+        {
+            let routed_user_message = UserMessage {
+                text,
+                local_images,
+                remote_image_urls,
+                text_elements,
+                mention_bindings,
+            };
+            let (routed_user_message, display_history_record) =
+                orchestrator_routing_user_message(routed_user_message, &history_record);
+            history_record = display_history_record;
+            let UserMessage {
+                text: routed_text,
+                local_images: routed_local_images,
+                remote_image_urls: routed_remote_image_urls,
+                text_elements: routed_text_elements,
+                mention_bindings: routed_mention_bindings,
+            } = routed_user_message;
+            text = routed_text;
+            local_images = routed_local_images;
+            remote_image_urls = routed_remote_image_urls;
+            text_elements = routed_text_elements;
+            mention_bindings = routed_mention_bindings;
         }
 
         for image_url in &remote_image_urls {
@@ -6524,7 +6753,9 @@ impl ChatWidget {
             ));
             return (false, None);
         }
-        let collaboration_mode = if self.collaboration_modes_enabled() {
+        let collaboration_mode = if self.orchestrator_mode {
+            Some(effective_mode.clone())
+        } else if self.collaboration_modes_enabled() {
             self.active_collaboration_mask
                 .as_ref()
                 .map(|_| effective_mode.clone())
@@ -6598,6 +6829,19 @@ impl ChatWidget {
             self.submit_op(Op::AddToHistory { text: history_text });
         }
 
+        let committed_user_message_dedupe =
+            (self.orchestrator_mode && render_in_history).then(|| {
+                Self::rendered_user_message_event_from_parts(
+                    text.clone(),
+                    text_elements.clone(),
+                    local_images
+                        .iter()
+                        .map(|image| image.path.clone())
+                        .collect::<Vec<_>>(),
+                    remote_image_urls.clone(),
+                )
+            });
+
         if let Some(pending_steer) = pending_steer {
             self.pending_steers.push_back(pending_steer);
             self.saw_plan_item_this_turn = false;
@@ -6660,6 +6904,9 @@ impl ChatWidget {
                 ));
                 self.record_visible_user_turn_for_copy();
             }
+        }
+        if let Some(rendered) = committed_user_message_dedupe {
+            self.last_rendered_user_message_event = Some(rendered);
         }
 
         self.needs_final_message_separator = false;
@@ -8170,6 +8417,25 @@ impl ChatWidget {
         }
         let mut submitted_follow_up = false;
         while !self.is_user_turn_pending_or_running() {
+            if let Some((user_message, history_record, inbox_count)) =
+                self.pop_next_orchestrator_inbox_batch()
+            {
+                let title = if inbox_count == 1 {
+                    "Starting orchestration pass for 1 inbox update.".to_string()
+                } else {
+                    format!("Starting orchestration pass for {inbox_count} inbox updates.")
+                };
+                self.add_info_message(
+                    title,
+                    Some(
+                        "I'll keep the main chat brief and route substantial work to subagents."
+                            .to_string(),
+                    ),
+                );
+                submitted_follow_up =
+                    self.submit_user_message_with_history_record(user_message, history_record);
+                break;
+            }
             let Some((queued_message, history_record)) = self.pop_next_queued_user_message() else {
                 break;
             };

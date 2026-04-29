@@ -758,6 +758,7 @@ async fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_pat
 
     let session = Arc::new(session);
     let turn = Arc::new(turn);
+    let child_cwd = turn.config.cwd.join("worktrees/test_process");
     let spawn_output = SpawnAgentHandlerV2
         .handle(invocation(
             session.clone(),
@@ -765,7 +766,8 @@ async fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_pat
             "spawn_agent",
             function_payload(json!({
                 "message": "inspect this repo",
-                "task_name": "test_process"
+                "task_name": "test_process",
+                "cwd": "worktrees/test_process"
             })),
         ))
         .await
@@ -796,6 +798,7 @@ async fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_pat
         child_snapshot.session_source.get_agent_path().as_deref(),
         Some("/root/test_process")
     );
+    assert_eq!(child_snapshot.cwd, child_cwd);
     assert!(manager.captured_ops().iter().any(|(id, op)| {
         *id == child_thread_id
             && matches!(

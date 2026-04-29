@@ -609,6 +609,10 @@ pub struct Tui {
     #[serde(default = "default_true")]
     pub show_tooltips: bool,
 
+    /// Keep Codex in master orchestration mode across TUI launches and resumed sessions.
+    #[serde(default)]
+    pub orchestrator_mode: bool,
+
     /// Controls whether the TUI uses the terminal's alternate screen buffer.
     ///
     /// - `auto` (default): Disable alternate screen in Zellij, enable elsewhere.

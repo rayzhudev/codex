@@ -87,16 +87,22 @@ async fn submission_preserves_text_elements_and_local_images() {
 
 #[tokio::test]
 async fn orchestrator_mode_injects_developer_instructions() {
-    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
     chat.dispatch_command(SlashCommand::Orchestrate);
+    drain_insert_history(&mut rx);
 
     chat.submit_user_message("implement several independent changes".into());
 
-    let collaboration_mode = match next_submit_op(&mut op_rx) {
+    let (collaboration_mode, items) = match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode, ..
-        } => collaboration_mode.expect("orchestrator turn should include collaboration mode"),
+            collaboration_mode,
+            items,
+            ..
+        } => (
+            collaboration_mode.expect("orchestrator turn should include collaboration mode"),
+            items,
+        ),
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
     let instructions = collaboration_mode
@@ -104,8 +110,142 @@ async fn orchestrator_mode_injects_developer_instructions() {
         .developer_instructions
         .expect("orchestrator instructions");
     assert!(instructions.contains("You are Codex Orchestrator"));
+    assert!(instructions.contains("triage and routing agent"));
+    assert!(instructions.contains("Do not satisfy actionable user requests yourself"));
     assert!(instructions.contains("use spawn_agent"));
-    assert!(instructions.contains("commit and push the integrated result to GitHub"));
+    assert!(instructions.contains("create a fresh git worktree and branch"));
+    assert!(instructions.contains("spawn_agent's `cwd`"));
+    assert!(instructions.contains("do not block on worktree setup"));
+    assert!(instructions.contains("open a pull request"));
+
+    assert_eq!(items.len(), 1);
+    let UserInput::Text { text, .. } = &items[0] else {
+        panic!("expected text input, got {:?}", items[0]);
+    };
+    assert!(text.starts_with("Route this orchestrator-mode user request."));
+    assert!(text.contains("Do not complete the request yourself in the main thread."));
+    assert!(text.contains("spawn_agent for new work or send_input to an existing child agent"));
+    assert!(text.contains("do not block on worktree setup"));
+    assert!(text.contains("implement several independent changes"));
+
+    let rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("implement several independent changes"));
+    assert!(!rendered.contains("Route this orchestrator-mode user request."));
+
+    complete_user_message(&mut chat, "user-1", text);
+    let committed_rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!committed_rendered.contains("Route this orchestrator-mode user request."));
+}
+
+#[tokio::test]
+async fn orchestrator_mode_forces_collaboration_mode_without_active_mask() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.active_collaboration_mask = None;
+    chat.set_orchestrator_mode(true);
+
+    chat.submit_user_message("delegate this".into());
+
+    let collaboration_mode = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            collaboration_mode, ..
+        } => collaboration_mode.expect("orchestrator turn should include collaboration mode"),
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+    assert!(
+        collaboration_mode
+            .settings
+            .developer_instructions
+            .expect("orchestrator instructions")
+            .contains("You are Codex Orchestrator")
+    );
+}
+
+#[tokio::test]
+async fn orchestrator_mode_adds_follow_up_to_inbox_during_active_turn() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.set_orchestrator_mode(true);
+    chat.agent_turn_running = true;
+    chat.bottom_pane.set_task_running(/*running*/ true);
+
+    chat.submit_user_message("follow up".into());
+
+    assert!(op_rx.try_recv().is_err());
+    assert_eq!(chat.queued_user_messages.len(), 1);
+    assert_eq!(chat.queued_user_messages.front().unwrap().text, "follow up");
+    let ack = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(ack.contains("Added to orchestrator inbox."));
+    assert!(ack.contains("without steering the active agent"));
+}
+
+#[tokio::test]
+async fn orchestrator_mode_batches_inbox_follow_ups_on_next_idle_turn() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.set_orchestrator_mode(true);
+    chat.agent_turn_running = true;
+    chat.bottom_pane.set_task_running(/*running*/ true);
+
+    chat.submit_user_message("first follow up".into());
+    chat.submit_user_message("second follow up".into());
+
+    assert!(op_rx.try_recv().is_err());
+    chat.agent_turn_running = false;
+    chat.bottom_pane.set_task_running(/*running*/ false);
+
+    assert!(chat.maybe_send_next_queued_input());
+
+    let items = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => items,
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+    assert_eq!(items.len(), 1);
+    let UserInput::Text { text, .. } = &items[0] else {
+        panic!("expected text input, got {:?}", items[0]);
+    };
+    assert!(text.starts_with("Process this orchestrator inbox batch as routing intake."));
+    assert!(text.contains("Do not complete the requested work yourself in the main thread."));
+    assert!(text.contains("spawn_agent for new work or send_input to an existing child agent"));
+    assert!(text.contains("New orchestrator inbox updates:"));
+    assert!(text.contains("first follow up"));
+    assert!(text.contains("second follow up"));
+    assert!(chat.queued_user_messages.is_empty());
+}
+
+#[tokio::test]
+async fn orchestrator_mode_joined_multiplayer_messages_bypass_inbox_during_active_turn() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.set_orchestrator_mode(true);
+    chat.set_joined_multiplayer_session(true);
+    chat.agent_turn_running = true;
+    chat.bottom_pane.set_task_running(/*running*/ true);
+
+    chat.submit_user_message("send to host".into());
+
+    assert!(op_rx.try_recv().is_err());
+    assert!(chat.queued_user_messages.is_empty());
+    let mut sent_text = None;
+    while let Ok(event) = rx.try_recv() {
+        if let AppEvent::SendJoinedMultiplayerMessage { text } = event {
+            sent_text = Some(text);
+            break;
+        }
+    }
+    assert_eq!(sent_text.as_deref(), Some("send to host"));
 }
 
 #[tokio::test]
@@ -123,13 +263,12 @@ async fn multiplayer_messages_include_participant_label_in_orchestrator_mode() {
         Op::UserTurn { items, .. } => items,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
-    assert_eq!(
-        items,
-        vec![UserInput::Text {
-            text: "[participant: Claire] please update the docs".to_string(),
-            text_elements: Vec::new(),
-        }]
-    );
+    assert_eq!(items.len(), 1);
+    let UserInput::Text { text, .. } = &items[0] else {
+        panic!("expected text input, got {:?}", items[0]);
+    };
+    assert!(text.contains("Route this orchestrator-mode user request."));
+    assert!(text.contains("[participant: Claire] please update the docs"));
 }
 
 #[tokio::test]

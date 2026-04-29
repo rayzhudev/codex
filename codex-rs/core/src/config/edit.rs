@@ -1177,6 +1177,14 @@ impl ConfigEditsBuilder {
         self
     }
 
+    pub fn set_tui_orchestrator_mode(mut self, enabled: bool) -> Self {
+        self.edits.push(ConfigEdit::SetPath {
+            segments: vec!["tui".to_string(), "orchestrator_mode".to_string()],
+            value: value(enabled),
+        });
+        self
+    }
+
     pub fn set_model_availability_nux_count(mut self, shown_count: &HashMap<String, u32>) -> Self {
         self.edits
             .extend(model_availability_nux_count_edits(shown_count));
