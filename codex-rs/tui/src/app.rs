@@ -61,6 +61,7 @@ use crate::multi_agents::agent_picker_status_dot_spans;
 use crate::multi_agents::format_agent_picker_item_name;
 use crate::multi_agents::next_agent_shortcut_matches;
 use crate::multi_agents::previous_agent_shortcut_matches;
+use crate::multiplayer::MultiplayerSession;
 use crate::pager_overlay::Overlay;
 use crate::read_session_model;
 use crate::render::highlight::highlight_bash_to_lines;
@@ -584,6 +585,7 @@ pub(crate) struct App {
     // overwrite a newer toggle, even if the plugin is toggled from different
     // cwd contexts.
     pending_plugin_enabled_writes: HashMap<String, Option<bool>>,
+    multiplayer_session: Option<MultiplayerSession>,
 }
 
 fn active_turn_not_steerable_turn_error(error: &TypedRequestError) -> Option<AppServerTurnError> {
@@ -630,6 +632,54 @@ fn active_turn_steer_race(error: &TypedRequestError) -> Option<ActiveTurnSteerRa
 }
 
 impl App {
+    fn multiplayer_history_snapshot(&self) -> Vec<String> {
+        self.transcript_cells
+            .iter()
+            .flat_map(|cell| {
+                crate::multiplayer::lines_to_plain_text(cell.transcript_lines(u16::MAX))
+            })
+            .collect()
+    }
+
+    fn publish_multiplayer_cell(&self, cell: &dyn HistoryCell) {
+        if let Some(session) = &self.multiplayer_session {
+            session.publish_lines(crate::multiplayer::lines_to_plain_text(
+                cell.transcript_lines(u16::MAX),
+            ));
+        }
+    }
+
+    async fn start_or_show_multiplayer_session(&mut self) {
+        if let Some(session) = &self.multiplayer_session {
+            self.chat_widget.add_info_message(
+                format!("Multiplayer invite link: {}", session.url()),
+                Some("Anyone with this link can view the transcript and send messages into this Codex session.".to_string()),
+            );
+            return;
+        }
+
+        match MultiplayerSession::start(
+            self.app_event_tx.clone(),
+            self.multiplayer_history_snapshot(),
+        )
+        .await
+        {
+            Ok(session) => {
+                let url = session.url().to_string();
+                session.publish_system("Multiplayer session started.");
+                self.multiplayer_session = Some(session);
+                self.chat_widget.add_info_message(
+                    format!("Multiplayer invite link: {url}"),
+                    Some("The invite server is unauthenticated beyond the random link token. Share it only with people you trust on this network.".to_string()),
+                );
+            }
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to start multiplayer session: {err}"));
+            }
+        }
+    }
+
     pub fn chatwidget_init_for_forked_or_resumed_thread(
         &self,
         tui: &mut tui::Tui,
@@ -952,6 +1002,7 @@ See the Codex keymap documentation for supported actions and examples."
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
+            multiplayer_session: None,
         };
         if let Some(started) = initial_started_thread {
             app.enqueue_primary_thread_session(started.session, started.turns)

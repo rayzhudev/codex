@@ -179,11 +179,21 @@ impl App {
 
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::StartMultiplayerSession => {
+                self.start_or_show_multiplayer_session().await;
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::MultiplayerChatMessage { author, text } => {
+                self.chat_widget
+                    .submit_multiplayer_user_message(author, text);
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::BeginInitialHistoryReplayBuffer => {
                 self.begin_initial_history_replay_buffer();
             }
             AppEvent::InsertHistoryCell(cell) => {
                 let cell: Arc<dyn HistoryCell> = cell.into();
+                self.publish_multiplayer_cell(cell.as_ref());
                 if let Some(Overlay::Transcript(t)) = &mut self.overlay {
                     t.insert_cell(cell.clone());
                     tui.frame_requester().schedule_frame();
@@ -217,6 +227,7 @@ impl App {
                 if start < end {
                     let consolidated: Arc<dyn HistoryCell> =
                         Arc::new(history_cell::AgentMarkdownCell::new(source, &cwd));
+                    self.publish_multiplayer_cell(consolidated.as_ref());
                     self.transcript_cells
                         .splice(start..end, std::iter::once(consolidated.clone()));
 
@@ -241,6 +252,7 @@ impl App {
                 );
                 let consolidated: Arc<dyn HistoryCell> =
                     Arc::new(history_cell::new_proposed_plan(source, &self.config.cwd));
+                self.publish_multiplayer_cell(consolidated.as_ref());
 
                 if start < end {
                     self.transcript_cells

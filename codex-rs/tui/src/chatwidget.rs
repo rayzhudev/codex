@@ -11695,6 +11695,25 @@ impl ChatWidget {
         }
     }
 
+    pub(crate) fn submit_multiplayer_user_message(&mut self, author: String, text: String) {
+        let text = format!("{author}: {text}");
+        let user_message = UserMessage {
+            text,
+            local_images: Vec::new(),
+            remote_image_urls: Vec::new(),
+            text_elements: Vec::new(),
+            mention_bindings: Vec::new(),
+        };
+        if self.is_plan_streaming_in_tui() {
+            self.queue_user_message(user_message);
+        } else {
+            let _ = self.submit_user_message_with_shell_escape_policy(
+                user_message,
+                ShellEscapePolicy::Disallow,
+            );
+        }
+    }
+
     /// True when the UI is in the regular composer state with no running task,
     /// no modal overlay (e.g. approvals or status indicator), and no composer popups.
     /// In this state Esc-Esc backtracking is enabled.

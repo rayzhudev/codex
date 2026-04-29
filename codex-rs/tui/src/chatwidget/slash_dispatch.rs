@@ -147,6 +147,9 @@ impl ChatWidget {
             SlashCommand::Fork => {
                 self.app_event_tx.send(AppEvent::ForkCurrentSession);
             }
+            SlashCommand::Invite => {
+                self.app_event_tx.send(AppEvent::StartMultiplayerSession);
+            }
             SlashCommand::Init => {
                 let init_target = self.config.cwd.join(DEFAULT_AGENTS_MD_FILENAME);
                 if init_target.exists() {
@@ -846,6 +849,7 @@ impl ChatWidget {
             | SlashCommand::Copy
             | SlashCommand::Diff
             | SlashCommand::Rename
+            | SlashCommand::Invite
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback
             | SlashCommand::New

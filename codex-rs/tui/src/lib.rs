@@ -144,6 +144,7 @@ mod mention_codec;
 mod model_catalog;
 mod model_migration;
 mod multi_agents;
+mod multiplayer;
 mod notifications;
 #[cfg(any(not(debug_assertions), test))]
 mod npm_registry;

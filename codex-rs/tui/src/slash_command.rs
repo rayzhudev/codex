@@ -31,6 +31,7 @@ pub enum SlashCommand {
     New,
     Resume,
     Fork,
+    Invite,
     Init,
     Compact,
     Plan,
@@ -85,6 +86,7 @@ impl SlashCommand {
             SlashCommand::Resume => "resume a saved chat",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
+            SlashCommand::Invite => "host a multiplayer session and show the invite link",
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
@@ -212,6 +214,7 @@ impl SlashCommand {
             SlashCommand::Settings => true,
             SlashCommand::Collab => true,
             SlashCommand::Agent | SlashCommand::MultiAgents => true,
+            SlashCommand::Invite => true,
             SlashCommand::Theme => false,
         }
     }
@@ -256,6 +259,7 @@ mod tests {
         assert!(SlashCommand::Goal.available_during_task());
         assert!(SlashCommand::Title.available_during_task());
         assert!(SlashCommand::Statusline.available_during_task());
+        assert!(SlashCommand::Invite.available_during_task());
     }
 
     #[test]

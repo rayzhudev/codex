@@ -165,6 +165,15 @@ pub(crate) enum AppEvent {
     /// Fork the current session into a new thread.
     ForkCurrentSession,
 
+    /// Start or display the current multiplayer invite server.
+    StartMultiplayerSession,
+
+    /// Submit a message received from a browser participant.
+    MultiplayerChatMessage {
+        author: String,
+        text: String,
+    },
+
     /// Request to exit the application.
     ///
     /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
