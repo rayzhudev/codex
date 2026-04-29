@@ -1,3 +1,13 @@
+## Changes from upstream Codex
+
+This fork adds collaboration features on top of the upstream OpenAI Codex repo:
+
+- **Multiplayer mode:** multiple people can participate in the same Codex session.
+- **Session invites:** use `/invite` to invite collaborators and `/join` to enter an existing session.
+- **Orchestrator mode:** the main Codex agent can spawn subagents to handle tasks while keeping the primary thread focused and uncluttered.
+
+---
+
 <p align="center"><code>npm i -g @openai/codex</code><br />or <code>brew install --cask codex</code></p>
 <p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
 <p align="center">
