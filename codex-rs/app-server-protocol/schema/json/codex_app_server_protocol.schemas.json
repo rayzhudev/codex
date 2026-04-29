@@ -2594,6 +2594,7 @@
     },
     "JSONRPCError": {
       "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
       "description": "A response to a request that indicates an error occurred.",
       "properties": {
         "error": {
@@ -2612,6 +2613,7 @@
     },
     "JSONRPCErrorError": {
       "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
       "properties": {
         "code": {
           "format": "int64",
@@ -2650,6 +2652,7 @@
     },
     "JSONRPCNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
       "description": "A notification which does not expect a response.",
       "properties": {
         "method": {
@@ -2665,6 +2668,7 @@
     },
     "JSONRPCRequest": {
       "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
       "description": "A request that expects a response.",
       "properties": {
         "id": {
@@ -2695,6 +2699,7 @@
     },
     "JSONRPCResponse": {
       "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
       "description": "A successful (non-error) response to a request.",
       "properties": {
         "id": {
