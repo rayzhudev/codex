@@ -397,7 +397,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
     #transcript div { min-height: 1.45em; }
     form {
       display: grid;
-      grid-template-columns: minmax(96px, 180px) 1fr auto;
+      grid-template-columns: minmax(96px, 180px) 1fr auto auto;
       gap: 8px;
       padding: 12px;
       border-top: 1px solid #2a2f3a;
@@ -434,7 +434,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
     <form id="form">
       <input id="name" autocomplete="name" placeholder="Name" />
       <input id="message" autocomplete="off" placeholder="Message Codex" />
-      <button id="send" type="submit">Send</button>
+      <button id="click" type="button" disabled>Click</button>
+      <button id="send" type="submit" disabled>Send</button>
     </form>
   </main>
   <script>
@@ -445,6 +446,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
     const form = document.getElementById("form");
     const nameInput = document.getElementById("name");
     const messageInput = document.getElementById("message");
+    const clickButton = document.getElementById("click");
     const sendButton = document.getElementById("send");
 
     nameInput.value = localStorage.getItem("codex.multiplayer.name") || "";
@@ -464,10 +466,12 @@ const INDEX_HTML: &str = r#"<!doctype html>
 
     ws.addEventListener("open", () => {
       statusEl.textContent = "Connected";
+      clickButton.disabled = false;
       sendButton.disabled = false;
     });
     ws.addEventListener("close", () => {
       statusEl.textContent = "Disconnected";
+      clickButton.disabled = true;
       sendButton.disabled = true;
     });
     ws.addEventListener("message", (event) => {
@@ -482,13 +486,22 @@ const INDEX_HTML: &str = r#"<!doctype html>
       }
     });
 
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const text = messageInput.value.trim();
+    function sendChat(text) {
       if (!text || ws.readyState !== WebSocket.OPEN) return;
       const name = nameInput.value.trim() || "Guest";
       localStorage.setItem("codex.multiplayer.name", name);
       ws.send(JSON.stringify({ type: "chat", name, text }));
+    }
+
+    clickButton.addEventListener("click", () => {
+      sendChat("click");
+      messageInput.focus();
+    });
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = messageInput.value.trim();
+      sendChat(text);
       messageInput.value = "";
       messageInput.focus();
     });
@@ -500,6 +513,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
 #[cfg(test)]
 mod tests {
     use super::HISTORY_LIMIT;
+    use super::INDEX_HTML;
     use super::clean_name;
     use super::invite_to_ws_url;
     use super::trim_history;
@@ -523,6 +537,13 @@ mod tests {
         let trimmed = trim_history(history);
         assert_eq!(trimmed.len(), HISTORY_LIMIT);
         assert_eq!(trimmed.first().map(String::as_str), Some("5"));
+    }
+
+    #[test]
+    fn multiplayer_page_includes_click_button() {
+        assert!(INDEX_HTML.contains(r#"<button id="click" type="button" disabled>Click</button>"#));
+        assert!(INDEX_HTML.contains(r#"clickButton.addEventListener("click""#));
+        assert!(INDEX_HTML.contains(r#"sendChat("click")"#));
     }
 
     #[test]
