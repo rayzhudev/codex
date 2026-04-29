@@ -2898,7 +2898,7 @@ impl HistoryCell for FinalMessageSeparator {
         }
 
         if label_parts.is_empty() {
-            return vec![Line::from_iter(["─".repeat(width as usize).dim()])];
+            return Vec::new();
         }
 
         let label = format!("─ {} ─", label_parts.join(" • "));
@@ -3365,6 +3365,15 @@ mod tests {
 
         assert_eq!(rendered.len(), 1);
         assert!(rendered[0].contains("Worked for"));
+    }
+
+    #[test]
+    fn final_message_separator_omits_empty_divider() {
+        let cell = FinalMessageSeparator::new(Some(12), /*runtime_metrics*/ None);
+        let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+
+        assert_eq!(cell.display_lines(/*width*/ 80), Vec::<Line>::new());
+        insta::assert_snapshot!(rendered, @"");
     }
 
     #[test]
