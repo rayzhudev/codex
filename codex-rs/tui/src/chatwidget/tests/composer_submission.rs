@@ -86,6 +86,52 @@ async fn submission_preserves_text_elements_and_local_images() {
 }
 
 #[tokio::test]
+async fn orchestrator_mode_injects_developer_instructions() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.dispatch_command(SlashCommand::Orchestrate);
+
+    chat.submit_user_message("implement several independent changes".into());
+
+    let collaboration_mode = match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            collaboration_mode, ..
+        } => collaboration_mode.expect("orchestrator turn should include collaboration mode"),
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+    let instructions = collaboration_mode
+        .settings
+        .developer_instructions
+        .expect("orchestrator instructions");
+    assert!(instructions.contains("You are Codex Orchestrator"));
+    assert!(instructions.contains("use spawn_agent"));
+}
+
+#[tokio::test]
+async fn multiplayer_messages_include_participant_label_in_orchestrator_mode() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.dispatch_command(SlashCommand::Orchestrate);
+
+    chat.submit_multiplayer_user_message(
+        "Claire".to_string(),
+        "please update the docs".to_string(),
+    );
+
+    let items = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => items,
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+    assert_eq!(
+        items,
+        vec![UserInput::Text {
+            text: "[participant: Claire] please update the docs".to_string(),
+            text_elements: Vec::new(),
+        }]
+    );
+}
+
+#[tokio::test]
 async fn submission_includes_configured_permission_profile() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

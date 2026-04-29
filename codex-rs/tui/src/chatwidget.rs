@@ -79,6 +79,22 @@ use crate::terminal_title::clear_terminal_title;
 use crate::terminal_title::set_terminal_title;
 use crate::text_formatting::proper_join;
 use crate::version::CODEX_CLI_VERSION;
+
+const ORCHESTRATOR_MODE_INSTRUCTIONS: &str = r#"You are Codex Orchestrator for a shared Codex session.
+
+Optimize for parallel execution and low main-chat noise.
+Respond in 1-2 concise sentences in the main chat unless user input is required.
+For substantial or independent work, use spawn_agent to delegate to child Codex agents.
+Spawn multiple agents in parallel when tasks can proceed independently.
+Before delegating, identify which tasks are independent and which task you should handle locally right now.
+Do not wait for child agents unless their result is needed for the next main-chat step.
+Use send_input to route follow-ups to existing agents when appropriate.
+Use wait_agent sparingly, with timeouts scaled to the expected work.
+Keep each child task self-contained and include file/module ownership when coding work is delegated.
+Tell child agents they are not alone in the codebase and must not revert edits made by others.
+Do not paste child transcripts into the main chat; summarize only status, blockers, decisions, and final results.
+Track participant names in messages and route follow-ups from the same participant to the relevant task when clear.
+"#;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppInfo;
@@ -946,6 +962,7 @@ pub(crate) struct ChatWidget {
     thread_rename_block_message: Option<String>,
     active_side_conversation: bool,
     joined_multiplayer_session: bool,
+    orchestrator_mode: bool,
     normal_placeholder_text: String,
     side_placeholder_text: String,
     forked_from: Option<ThreadId>,
@@ -5621,6 +5638,7 @@ impl ChatWidget {
             thread_rename_block_message: None,
             active_side_conversation: false,
             joined_multiplayer_session: false,
+            orchestrator_mode: false,
             normal_placeholder_text: placeholder,
             side_placeholder_text: side_placeholder,
             forked_from: None,
@@ -6110,6 +6128,24 @@ impl ChatWidget {
         self.bottom_pane.show_view(Box::new(view));
     }
 
+    fn toggle_orchestrator_mode(&mut self) {
+        self.orchestrator_mode = !self.orchestrator_mode;
+        if self.orchestrator_mode {
+            self.add_info_message(
+                "Orchestrator mode enabled.".to_string(),
+                Some(
+                    "The master agent will keep replies brief and delegate substantial work to child agents."
+                        .to_string(),
+                ),
+            );
+        } else {
+            self.add_info_message(
+                "Orchestrator mode disabled.".to_string(),
+                /*hint*/ None,
+            );
+        }
+    }
+
     fn ensure_thread_rename_allowed(&mut self) -> bool {
         match self.thread_rename_block_message.clone() {
             Some(message) => {
@@ -6470,7 +6506,7 @@ impl ChatWidget {
             }
         }
 
-        let effective_mode = self.effective_collaboration_mode();
+        let effective_mode = self.effective_collaboration_mode_for_submission();
         if effective_mode.model().trim().is_empty() {
             self.add_error_message(
                 "Thread model is unavailable. Wait for the thread to finish syncing or choose a model before sending input.".to_string(),
@@ -10966,6 +11002,18 @@ impl ChatWidget {
         )
     }
 
+    fn effective_collaboration_mode_for_submission(&self) -> CollaborationMode {
+        let mut mode = self.effective_collaboration_mode();
+        if self.orchestrator_mode {
+            mode.settings.developer_instructions =
+                Some(mode.settings.developer_instructions.as_deref().map_or_else(
+                    || ORCHESTRATOR_MODE_INSTRUCTIONS.to_string(),
+                    |existing| format!("{existing}\n\n{ORCHESTRATOR_MODE_INSTRUCTIONS}"),
+                ));
+        }
+        mode
+    }
+
     fn refresh_model_display(&mut self) {
         let effective = self.effective_collaboration_mode();
         self.session_header.set_model(effective.model());
@@ -11729,7 +11777,11 @@ impl ChatWidget {
     }
 
     pub(crate) fn submit_multiplayer_user_message(&mut self, author: String, text: String) {
-        let text = format!("{author}: {text}");
+        let text = if self.orchestrator_mode {
+            format!("[participant: {author}] {text}")
+        } else {
+            format!("{author}: {text}")
+        };
         let user_message = UserMessage {
             text,
             local_images: Vec::new(),

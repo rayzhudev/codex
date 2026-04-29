@@ -72,6 +72,25 @@ async fn slash_compact_eagerly_queues_follow_up_before_turn_start() {
 }
 
 #[tokio::test]
+async fn slash_orchestrate_toggles_orchestrator_mode() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::Orchestrate);
+
+    assert!(chat.orchestrator_mode);
+    let rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let rendered = lines_to_single_string(&rendered);
+    assert!(rendered.contains("Orchestrator mode enabled."));
+
+    chat.dispatch_command(SlashCommand::Orchestrate);
+
+    assert!(!chat.orchestrator_mode);
+}
+
+#[tokio::test]
 async fn queued_slash_compact_dispatches_after_active_turn() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());

@@ -153,6 +153,9 @@ impl ChatWidget {
             SlashCommand::Join => {
                 self.show_multiplayer_join_prompt();
             }
+            SlashCommand::Orchestrate => {
+                self.toggle_orchestrator_mode();
+            }
             SlashCommand::Init => {
                 let init_target = self.config.cwd.join(DEFAULT_AGENTS_MD_FILENAME);
                 if init_target.exists() {
@@ -858,6 +861,7 @@ impl ChatWidget {
             | SlashCommand::Rename
             | SlashCommand::Invite
             | SlashCommand::Join
+            | SlashCommand::Orchestrate
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback
             | SlashCommand::New

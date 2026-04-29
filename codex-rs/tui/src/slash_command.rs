@@ -33,6 +33,7 @@ pub enum SlashCommand {
     Fork,
     Invite,
     Join,
+    Orchestrate,
     Init,
     Compact,
     Plan,
@@ -65,7 +66,7 @@ pub enum SlashCommand {
     Realtime,
     Settings,
     TestApproval,
-    #[strum(serialize = "subagents")]
+    #[strum(to_string = "agents", serialize = "subagents")]
     MultiAgents,
     // Debugging commands.
     #[strum(serialize = "debug-m-drop")]
@@ -89,6 +90,7 @@ impl SlashCommand {
             SlashCommand::Fork => "fork the current chat",
             SlashCommand::Invite => "host a multiplayer session and show the invite link",
             SlashCommand::Join => "join a multiplayer session from an invite link",
+            SlashCommand::Orchestrate => "toggle master orchestration mode",
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
@@ -219,6 +221,7 @@ impl SlashCommand {
             SlashCommand::Agent | SlashCommand::MultiAgents => true,
             SlashCommand::Invite => true,
             SlashCommand::Join => true,
+            SlashCommand::Orchestrate => true,
             SlashCommand::Theme => false,
         }
     }
@@ -259,11 +262,21 @@ mod tests {
     }
 
     #[test]
+    fn agents_command_keeps_subagents_alias() {
+        assert_eq!(SlashCommand::MultiAgents.command(), "agents");
+        assert_eq!(
+            SlashCommand::from_str("subagents"),
+            Ok(SlashCommand::MultiAgents)
+        );
+    }
+
+    #[test]
     fn certain_commands_are_available_during_task() {
         assert!(SlashCommand::Goal.available_during_task());
         assert!(SlashCommand::Title.available_during_task());
         assert!(SlashCommand::Statusline.available_during_task());
         assert!(SlashCommand::Invite.available_during_task());
+        assert!(SlashCommand::Orchestrate.available_during_task());
     }
 
     #[test]
