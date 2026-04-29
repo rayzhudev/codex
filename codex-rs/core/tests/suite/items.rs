@@ -42,6 +42,15 @@ use pretty_assertions::assert_eq;
 use std::path::Path;
 use std::path::PathBuf;
 
+fn agent_message_text(content: &[AgentMessageContent]) -> String {
+    content
+        .iter()
+        .map(|entry| match entry {
+            AgentMessageContent::Text { text } => text.as_str(),
+        })
+        .collect()
+}
+
 fn disabled_plan_turn(
     text: &str,
     model: String,
@@ -524,6 +533,70 @@ async fn agent_message_content_delta_has_item_metadata() -> anyhow::Result<()> {
     assert_eq!(delta_event.delta, "streamed response");
     assert_eq!(legacy_delta.delta, "streamed response");
     assert_eq!(completed_item.id, started_item.id);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agent_message_item_started_is_empty_when_added_item_has_text() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let TestCodex { codex, .. } = test_codex().build(&server).await?;
+
+    let added_text = "seeded ";
+    let delta_text = "response";
+    let full_message = format!("{added_text}{delta_text}");
+    let stream = sse(vec![
+        ev_response_created("resp-1"),
+        ev_message_item_added("msg-1", added_text),
+        ev_output_text_delta(delta_text),
+        ev_assistant_message("msg-1", &full_message),
+        ev_completed("resp-1"),
+    ]);
+    mount_sse_once(&server, stream).await;
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "please stream text".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+
+    let mut started_text = None;
+    let mut deltas = Vec::new();
+    let mut completed_text = None;
+
+    loop {
+        let ev = wait_for_event(&codex, |_| true).await;
+        match ev {
+            EventMsg::ItemStarted(ItemStartedEvent {
+                item: TurnItem::AgentMessage(item),
+                ..
+            }) => {
+                started_text = Some(agent_message_text(&item.content));
+            }
+            EventMsg::AgentMessageContentDelta(event) => deltas.push(event.delta),
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                item: TurnItem::AgentMessage(item),
+                ..
+            }) => {
+                completed_text = Some(agent_message_text(&item.content));
+            }
+            EventMsg::TurnComplete(_) => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(started_text.as_deref(), Some(""));
+    assert_eq!(deltas.concat(), full_message);
+    assert_eq!(completed_text.as_deref(), Some(full_message.as_str()));
 
     Ok(())
 }

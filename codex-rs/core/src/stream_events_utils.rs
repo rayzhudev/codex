@@ -270,6 +270,10 @@ pub(crate) async fn handle_output_item_done(
                         item.revised_prompt = None;
                         item.result.clear();
                         item.saved_path = None;
+                    } else if let TurnItem::AgentMessage(item) = &mut started_item {
+                        item.content = vec![codex_protocol::items::AgentMessageContent::Text {
+                            text: String::new(),
+                        }];
                     }
                     ctx.sess
                         .emit_turn_item_started(&ctx.turn_context, &started_item)

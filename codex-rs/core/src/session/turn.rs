@@ -2005,19 +2005,15 @@ async fn try_run_sampling_request(
                         && let Some(raw_text) = raw_assistant_output_text_from_item(&item)
                     {
                         let item_id = turn_item.id();
-                        let mut seeded =
+                        let seeded =
                             assistant_message_stream_parsers.seed_item_text(&item_id, &raw_text);
                         if let TurnItem::AgentMessage(agent_message) = &mut turn_item {
                             agent_message.content =
                                 vec![codex_protocol::items::AgentMessageContent::Text {
-                                    text: if plan_mode {
-                                        String::new()
-                                    } else {
-                                        std::mem::take(&mut seeded.visible_text)
-                                    },
+                                    text: String::new(),
                                 }];
                         }
-                        seeded_parsed = plan_mode.then_some(seeded);
+                        seeded_parsed = Some(seeded);
                         seeded_item_id = Some(item_id);
                     }
                     if let Some(state) = plan_mode_state.as_mut()
@@ -2030,15 +2026,13 @@ async fn try_run_sampling_request(
                     } else {
                         sess.emit_turn_item_started(&turn_context, &turn_item).await;
                     }
-                    if let (Some(state), Some(item_id), Some(parsed)) = (
-                        plan_mode_state.as_mut(),
-                        seeded_item_id.as_deref(),
-                        seeded_parsed,
-                    ) {
+                    if let (Some(item_id), Some(parsed)) =
+                        (seeded_item_id.as_deref(), seeded_parsed)
+                    {
                         emit_streamed_assistant_text_delta(
                             &sess,
                             &turn_context,
-                            Some(state),
+                            plan_mode_state.as_mut(),
                             item_id,
                             parsed,
                         )
