@@ -157,7 +157,8 @@ async fn turn_started_uses_runtime_context_window_before_first_token_count() {
 async fn helpers_are_available_and_do_not_panic() {
     let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
     let tx = AppEventSender::new(tx_raw);
-    let cfg = test_config().await;
+    let mut cfg = test_config().await;
+    cfg.tui_orchestrator_mode = true;
     let resolved_model = crate::legacy_core::test_support::get_model_offline(cfg.model.as_deref());
     let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
     let init = ChatWidgetInit {
@@ -181,6 +182,7 @@ async fn helpers_are_available_and_do_not_panic() {
     let mut w = ChatWidget::new_with_app_event(init);
     // Basic construction sanity.
     let _ = &mut w;
+    assert!(!w.orchestrator_mode());
 }
 
 #[tokio::test]

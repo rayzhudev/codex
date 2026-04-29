@@ -5714,7 +5714,6 @@ impl ChatWidget {
             &chat_keymap.edit_queued_message,
             current_terminal_info,
         );
-        let orchestrator_mode = config.tui_orchestrator_mode;
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
             frame_requester: frame_requester.clone(),
@@ -5808,7 +5807,7 @@ impl ChatWidget {
             thread_rename_block_message: None,
             active_side_conversation: false,
             joined_multiplayer_session: false,
-            orchestrator_mode,
+            orchestrator_mode: false,
             normal_placeholder_text: placeholder,
             side_placeholder_text: side_placeholder,
             forked_from: None,
