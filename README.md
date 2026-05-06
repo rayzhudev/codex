@@ -1,9 +1,8 @@
 ## Changes from upstream Codex
 
-This fork adds collaboration features on top of the upstream OpenAI Codex repo:
+This fork adds collaboration and orchestration features on top of the upstream OpenAI Codex repo:
 
-- **Multiplayer mode:** multiple people can participate in the same Codex session.
-- **Session invites:** use `/invite` to invite collaborators and `/join` to enter an existing session.
+- **Multiplayer mode:** multiple people can participate in the same Codex session using `/invite` to invite collaborators and `/join` to enter an existing session.
 - **Orchestrator mode:** the main Codex agent can spawn subagents to handle tasks while keeping the primary thread focused and uncluttered.
 
 ---

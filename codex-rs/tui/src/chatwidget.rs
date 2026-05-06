@@ -2331,6 +2331,10 @@ impl ChatWidget {
         self.bottom_pane.set_active_agent_label(active_agent_label);
     }
 
+    pub(crate) fn set_multiplayer_online_count(&mut self, online_count: Option<usize>) {
+        self.bottom_pane.set_multiplayer_online_count(online_count);
+    }
+
     /// Recomputes footer status-line content from config and current runtime state.
     ///
     /// This method is the status-line orchestrator: it parses configured item identifiers,

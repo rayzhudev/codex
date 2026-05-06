@@ -191,6 +191,17 @@ pub(crate) enum AppEvent {
         reason: Option<String>,
     },
 
+    /// A participant joined the hosted multiplayer session.
+    MultiplayerParticipantJoined {
+        name: String,
+        online_count: usize,
+    },
+
+    /// The hosted multiplayer online count changed.
+    MultiplayerOnlineCountChanged {
+        online_count: usize,
+    },
+
     /// Submit a message received from a browser participant.
     MultiplayerChatMessage {
         author: String,

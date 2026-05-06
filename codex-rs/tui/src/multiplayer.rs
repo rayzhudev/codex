@@ -45,6 +45,7 @@ pub(crate) struct MultiplayerClient {
 struct MultiplayerState {
     token: String,
     history: Mutex<Vec<String>>,
+    participants: Mutex<HashMap<Uuid, String>>,
     tx: broadcast::Sender<ServerMessage>,
     app_event_tx: AppEventSender,
 }
@@ -65,6 +66,7 @@ struct InviteQuery {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum ClientMessage {
+    Hello { name: String },
     Chat { name: String, text: String },
 }
 
@@ -80,6 +82,21 @@ impl MultiplayerClient {
         let url = ws_url.to_string();
 
         tokio::spawn(async move {
+            let hello = ClientMessage::Hello {
+                name: default_participant_name(),
+            };
+            if let Ok(payload) = serde_json::to_string(&hello)
+                && writer
+                    .send(TungsteniteMessage::Text(payload.into()))
+                    .await
+                    .is_err()
+            {
+                app_event_tx.send(AppEvent::JoinedMultiplayerDisconnected {
+                    reason: Some("Failed to join multiplayer session.".to_string()),
+                });
+                return;
+            }
+
             loop {
                 tokio::select! {
                     outbound = outbound_rx.recv() => {
@@ -147,6 +164,7 @@ impl MultiplayerSession {
         let state = Arc::new(MultiplayerState {
             token: token.clone(),
             history: Mutex::new(trim_history(initial_history)),
+            participants: Mutex::new(HashMap::new()),
             tx,
             app_event_tx,
         });
@@ -298,6 +316,8 @@ async fn ws_handler(
 }
 
 async fn handle_socket(socket: WebSocket, state: Arc<MultiplayerState>) {
+    let connection_id = Uuid::new_v4();
+    let mut participant_name: Option<String> = None;
     let (mut sender, mut receiver) = socket.split();
     let snapshot = {
         let history = state.history.lock().await;
@@ -331,17 +351,53 @@ async fn handle_socket(socket: WebSocket, state: Arc<MultiplayerState>) {
             msg = receiver.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(ClientMessage::Chat { name, text }) =
-                            serde_json::from_str::<ClientMessage>(&text)
-                        {
-                            let name = clean_name(&name);
-                            let text = text.trim();
-                            if !text.is_empty() {
-                                state.app_event_tx.send(AppEvent::MultiplayerChatMessage {
-                                    author: name,
-                                    text: text.to_string(),
-                                });
+                        match serde_json::from_str::<ClientMessage>(&text) {
+                            Ok(ClientMessage::Hello { name }) => {
+                                let name = clean_name(&name);
+                                let (online_count, joined) = register_participant(
+                                    &state,
+                                    connection_id,
+                                    name.clone(),
+                                    &mut participant_name,
+                                )
+                                .await;
+                                if joined {
+                                    state.app_event_tx.send(
+                                        AppEvent::MultiplayerParticipantJoined {
+                                            name,
+                                            online_count,
+                                        },
+                                    );
+                                }
                             }
+                            Ok(ClientMessage::Chat { name, text }) => {
+                                let name = clean_name(&name);
+                                let text = text.trim();
+                                if !text.is_empty() {
+                                    if participant_name.is_none() {
+                                        let (online_count, joined) = register_participant(
+                                            &state,
+                                            connection_id,
+                                            name.clone(),
+                                            &mut participant_name,
+                                        )
+                                        .await;
+                                        if joined {
+                                            state.app_event_tx.send(
+                                                AppEvent::MultiplayerParticipantJoined {
+                                                    name: name.clone(),
+                                                    online_count,
+                                                },
+                                            );
+                                        }
+                                    }
+                                    state.app_event_tx.send(AppEvent::MultiplayerChatMessage {
+                                        author: name,
+                                        text: text.to_string(),
+                                    });
+                                }
+                            }
+                            Err(_) => {}
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
@@ -351,6 +407,36 @@ async fn handle_socket(socket: WebSocket, state: Arc<MultiplayerState>) {
             }
         }
     }
+
+    if participant_name.is_some() {
+        let online_count = unregister_participant(&state, connection_id).await;
+        state
+            .app_event_tx
+            .send(AppEvent::MultiplayerOnlineCountChanged { online_count });
+    }
+}
+
+async fn register_participant(
+    state: &MultiplayerState,
+    connection_id: Uuid,
+    name: String,
+    participant_name: &mut Option<String>,
+) -> (usize, bool) {
+    let mut participants = state.participants.lock().await;
+    let joined = !participants.contains_key(&connection_id);
+    participants.insert(connection_id, name.clone());
+    *participant_name = Some(name);
+    (online_count(participants.len()), joined)
+}
+
+async fn unregister_participant(state: &MultiplayerState, connection_id: Uuid) -> usize {
+    let mut participants = state.participants.lock().await;
+    participants.remove(&connection_id);
+    online_count(participants.len())
+}
+
+fn online_count(participant_count: usize) -> usize {
+    participant_count.saturating_add(1)
 }
 
 fn clean_name(name: &str) -> String {
@@ -465,6 +551,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
     ws.addEventListener("open", () => {
       statusEl.textContent = "Connected";
       sendButton.disabled = false;
+      const name = nameInput.value.trim() || "Guest";
+      ws.send(JSON.stringify({ type: "hello", name }));
     });
     ws.addEventListener("close", () => {
       statusEl.textContent = "Disconnected";
@@ -502,6 +590,7 @@ mod tests {
     use super::HISTORY_LIMIT;
     use super::clean_name;
     use super::invite_to_ws_url;
+    use super::online_count;
     use super::trim_history;
 
     #[test]
@@ -523,6 +612,12 @@ mod tests {
         let trimmed = trim_history(history);
         assert_eq!(trimmed.len(), HISTORY_LIMIT);
         assert_eq!(trimmed.first().map(String::as_str), Some("5"));
+    }
+
+    #[test]
+    fn online_count_includes_host() {
+        assert_eq!(online_count(0), 1);
+        assert_eq!(online_count(2), 3);
     }
 
     #[test]

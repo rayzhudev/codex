@@ -670,6 +670,7 @@ impl App {
                 let url = session.url().to_string();
                 session.publish_system("Multiplayer session started.");
                 self.multiplayer_session = Some(session);
+                self.chat_widget.set_multiplayer_online_count(Some(1));
                 self.chat_widget.add_info_message(
                     format!("Multiplayer invite link: {url}"),
                     Some("The invite server is unauthenticated beyond the random link token. Share it only with people you trust on this network.".to_string()),

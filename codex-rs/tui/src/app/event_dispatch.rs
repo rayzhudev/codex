@@ -228,6 +228,18 @@ impl App {
                 self.chat_widget.add_error_message(message);
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::MultiplayerParticipantJoined { name, online_count } => {
+                self.chat_widget
+                    .set_multiplayer_online_count(Some(online_count));
+                self.chat_widget
+                    .add_info_message(format!("{name} joined the session"), /*hint*/ None);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::MultiplayerOnlineCountChanged { online_count } => {
+                self.chat_widget
+                    .set_multiplayer_online_count(Some(online_count));
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::MultiplayerChatMessage { author, text } => {
                 self.chat_widget
                     .submit_multiplayer_user_message(author, text);

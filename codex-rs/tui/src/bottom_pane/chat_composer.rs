@@ -168,6 +168,7 @@ use super::footer::footer_hint_items_width;
 use super::footer::footer_line_width;
 use super::footer::inset_footer_hint_area;
 use super::footer::max_left_width_for_right;
+use super::footer::multiplayer_online_count_line;
 use super::footer::passive_footer_status_line;
 use super::footer::render_context_right;
 use super::footer::render_footer_from_props;
@@ -397,6 +398,7 @@ pub(crate) struct ChatComposer {
     status_line_value: Option<Line<'static>>,
     status_line_enabled: bool,
     side_conversation_context_label: Option<String>,
+    multiplayer_online_count: Option<usize>,
     // Agent label injected into the footer's contextual row when multi-agent mode is active.
     active_agent_label: Option<String>,
     history_search: Option<HistorySearchSession>,
@@ -587,6 +589,7 @@ impl ChatComposer {
             status_line_value: None,
             status_line_enabled: false,
             side_conversation_context_label: None,
+            multiplayer_online_count: None,
             active_agent_label: None,
             history_search: None,
             submit_keys: vec![key_hint::plain(KeyCode::Enter)],
@@ -3901,6 +3904,14 @@ impl ChatComposer {
         true
     }
 
+    pub(crate) fn set_multiplayer_online_count(&mut self, online_count: Option<usize>) -> bool {
+        if self.multiplayer_online_count == online_count {
+            return false;
+        }
+        self.multiplayer_online_count = online_count;
+        true
+    }
+
     /// Replaces the contextual footer label for the currently viewed agent.
     ///
     /// Returning `false` means the value was unchanged, so callers can skip redraw work. This
@@ -4157,6 +4168,8 @@ impl ChatComposer {
                             Some(side_conversation_context_line(label))
                         } else if let Some(line) = self.shell_mode_footer_line() {
                             Some(line)
+                        } else if let Some(online_count) = self.multiplayer_online_count {
+                            Some(multiplayer_online_count_line(online_count))
                         } else if status_line_active {
                             let full = status_line_right_indicator(
                                 self.collaboration_mode_indicator,

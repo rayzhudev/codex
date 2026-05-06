@@ -186,6 +186,19 @@ async fn helpers_are_available_and_do_not_panic() {
 }
 
 #[tokio::test]
+async fn multiplayer_online_count_renders_in_footer_context() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.set_multiplayer_online_count(Some(2));
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(
+        popup.contains("2 online"),
+        "expected online count in footer, got: {popup}"
+    );
+}
+
+#[tokio::test]
 async fn prefetch_rate_limits_is_gated_on_chatgpt_auth_provider() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

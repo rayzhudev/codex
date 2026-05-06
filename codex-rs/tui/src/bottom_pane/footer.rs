@@ -984,6 +984,15 @@ pub(crate) fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>
     Line::from(vec![Span::from("100% context left").dim()])
 }
 
+pub(crate) fn multiplayer_online_count_line(online_count: usize) -> Line<'static> {
+    let label = if online_count == 1 {
+        "1 online".to_string()
+    } else {
+        format!("{online_count} online")
+    };
+    Line::from(vec![Span::from(label).dim()])
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ShortcutId {
     Commands,

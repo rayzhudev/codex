@@ -1524,6 +1524,12 @@ impl BottomPane {
             self.request_redraw();
         }
     }
+
+    pub(crate) fn set_multiplayer_online_count(&mut self, online_count: Option<usize>) {
+        if self.composer.set_multiplayer_online_count(online_count) {
+            self.request_redraw();
+        }
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
