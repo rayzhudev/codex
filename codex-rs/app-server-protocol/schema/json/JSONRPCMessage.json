@@ -16,6 +16,7 @@
   ],
   "definitions": {
     "JSONRPCError": {
+      "additionalProperties": false,
       "description": "A response to a request that indicates an error occurred.",
       "properties": {
         "error": {
@@ -32,6 +33,7 @@
       "type": "object"
     },
     "JSONRPCErrorError": {
+      "additionalProperties": false,
       "properties": {
         "code": {
           "format": "int64",
@@ -49,6 +51,7 @@
       "type": "object"
     },
     "JSONRPCNotification": {
+      "additionalProperties": false,
       "description": "A notification which does not expect a response.",
       "properties": {
         "method": {
@@ -62,6 +65,7 @@
       "type": "object"
     },
     "JSONRPCRequest": {
+      "additionalProperties": false,
       "description": "A request that expects a response.",
       "properties": {
         "id": {
@@ -90,6 +94,7 @@
       "type": "object"
     },
     "JSONRPCResponse": {
+      "additionalProperties": false,
       "description": "A successful (non-error) response to a request.",
       "properties": {
         "id": {
